@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+:root { color-scheme: light; }
+body { background: #f6f5f1; color: #252722; }
+::selection { background: #f7c1a9; }
+@layer base {
+  button, a, input, select { @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-4; }
+  button { @apply disabled:cursor-not-allowed disabled:opacity-50; }
+}
+@layer components {
+  .card { @apply rounded-2xl border border-line bg-white; }
+  .eyebrow { @apply text-[10px] font-bold uppercase tracking-[0.18em] text-muted; }
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-lg bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#41453b]; }
+  .field { @apply w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none focus:border-accent; }
+}
+.pitch-grid { background-image: linear-gradient(#ffffff09 1px,transparent 1px),linear-gradient(90deg,#ffffff09 1px,transparent 1px); background-size: 40px 40px; }

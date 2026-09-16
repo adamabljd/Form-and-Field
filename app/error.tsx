@@ -1,0 +1,2 @@
+'use client';
+export default function ErrorPage({ reset }: { reset: () => void }) { return <main className="mx-auto max-w-lg p-10"><h1 className="text-2xl font-semibold">We couldn’t load your training space.</h1><p className="my-5 text-sm text-muted">Please try again. If this continues, check that Supabase is connected and schema.sql has been applied.</p><button className="btn" onClick={reset}>Try again</button></main>; }

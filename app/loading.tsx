@@ -1,0 +1,1 @@
+export default function Loading() { return <div role="status" className="flex min-h-screen items-center justify-center text-sm text-muted"><span className="mr-3 h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent"/>Loading your training space…</div>; }

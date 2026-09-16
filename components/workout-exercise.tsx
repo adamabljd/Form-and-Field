@@ -1,0 +1,12 @@
+'use client';
+import { useActionState, useState } from 'react';
+import { Check, Dumbbell } from 'lucide-react';
+import { logExercise } from '@/app/actions';
+import { localDate, type Exercise } from '@/lib/training';
+export function WorkoutExercise({ exercise, alternatives, index }: { exercise: Exercise; alternatives: Exercise[]; index: number }) {
+  const [selected, setSelected] = useState(exercise.id);
+  const [state, action, pending] = useActionState(logExercise, {});
+  const choices = [exercise,...alternatives];
+  const current = choices.find(e=>e.id === selected)!;
+  return <form action={action} className="card p-5 sm:p-6"><input type="hidden" name="exercise_id" value={selected}/><div className="flex items-center gap-4"><span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#eeeee5] text-[#889371]"><Dumbbell size={24}/></span><div><p className="eyebrow">Movement {String(index+1).padStart(2,'0')}</p><h2 className="mt-1 text-lg font-semibold">{current.name}</h2><p className="mt-1 text-xs text-muted">{current.primary_muscle} · {current.equipment.join(', ') || 'Bodyweight'}</p></div></div>{alternatives.length>0 && <label className="mt-4 block text-xs text-muted">Need a substitution?<select disabled={pending} value={selected} onChange={e=>setSelected(e.target.value)} className="field mt-2">{choices.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>}<div className="my-5 grid grid-cols-2 gap-3 sm:grid-cols-4">{[{name:'sets',label:'Sets',value:3,max:50},{name:'reps',label:'Reps per set',value:8,max:1000},{name:'weight_kg',label:'Added weight (kg)',value:0,max:1000}].map(f=><label key={f.name} className="text-xs text-muted">{f.label}<input type="number" name={f.name} defaultValue={f.value} required min={f.name==='weight_kg'?0:1} max={f.max} step={f.name==='weight_kg'?0.5:1} className="field mt-2"/></label>)}<label className="text-xs text-muted">Training date<input type="date" name="date" required defaultValue={localDate()} className="field mt-2"/></label></div>{state.error && <p role="alert" className="mb-3 text-xs text-red-700">{state.error}</p>}{state.success && <p role="status" className="mb-3 text-xs text-green-700">{state.success}</p>}<button disabled={pending} className="btn text-xs"><Check size={15}/>{pending ? 'Saving…' : 'Save completed exercise'}</button><p className="mt-3 text-[10px] text-muted">Saving again updates this exercise’s log for the selected date.</p></form>;
+}
