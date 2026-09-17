@@ -34,6 +34,18 @@ create table public.ff_workout_plans (
   user_id uuid not null references public.ff_profiles(id) on delete cascade,
   created_at timestamptz not null default now(),
   name text not null,
+  program jsonb constraint ff_workout_plans_program_shape check (
+    program is null or coalesce((
+      jsonb_typeof(program) = 'object'
+      and program ?& array['version','equipment','match_days','days','warnings']
+      and program->>'version' = '1'
+      and jsonb_typeof(program->'equipment') = 'array'
+      and jsonb_typeof(program->'match_days') = 'array'
+      and jsonb_typeof(program->'warnings') = 'array'
+      and case when jsonb_typeof(program->'days') = 'array'
+        then jsonb_array_length(program->'days') = 4 else false end
+    ), false)
+  ),
   week_number int not null default 1 check (week_number > 0)
 );
 create table public.ff_workout_logs (
@@ -45,7 +57,17 @@ create table public.ff_workout_logs (
   weight_kg numeric(7,2) not null default 0 check (weight_kg between 0 and 1000),
   completed boolean not null default false,
   date date not null default current_date,
-  unique (user_id, exercise_id, date)
+  plan_id uuid references public.ff_workout_plans(id) on delete cascade,
+  session_day int check (session_day between 0 and 3),
+  slot_index int check (slot_index between 0 and 49),
+  set_index int check (set_index between 0 and 9),
+  target_sets int check (target_sets between 1 and 10),
+  constraint ff_workout_logs_live_context check (
+    (plan_id is null and session_day is null and slot_index is null and set_index is null and target_sets is null)
+    or (plan_id is not null and session_day is not null and slot_index is not null and set_index is not null and target_sets is not null and set_index < target_sets and sets = 1)
+  ),
+  constraint ff_workout_logs_entry_key unique nulls not distinct (user_id,exercise_id,date,plan_id,session_day,slot_index,set_index),
+  constraint ff_workout_logs_live_set_key unique (user_id,plan_id,session_day,slot_index,set_index,date)
 );
 create index ff_workout_plans_user_created_idx on public.ff_workout_plans(user_id, created_at desc);
 create index ff_workout_logs_user_date_idx on public.ff_workout_logs(user_id, date desc);
@@ -65,6 +87,11 @@ create policy "Read exercise library" on public.ff_exercises for select to authe
 create policy "Read substitutions" on public.ff_substitutions for select to authenticated using (true);
 create policy "Manage own plans" on public.ff_workout_plans for all to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 create policy "Manage own logs" on public.ff_workout_logs for all to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
+
+create policy "Live logs require owned plan" on public.ff_workout_logs as restrictive
+  for all to authenticated
+  using (plan_id is null or exists (select 1 from public.ff_workout_plans p where p.id = plan_id and p.user_id = (select auth.uid())))
+  with check (plan_id is null or exists (select 1 from public.ff_workout_plans p where p.id = plan_id and p.user_id = (select auth.uid())));
 
 revoke all on public.ff_profiles, public.ff_exercises, public.ff_substitutions, public.ff_workout_plans, public.ff_workout_logs from anon;
 revoke all on public.ff_profiles, public.ff_exercises, public.ff_substitutions, public.ff_workout_plans, public.ff_workout_logs from authenticated;
@@ -86,22 +113,5 @@ revoke all on function public.ff_handle_new_user() from public;
 create trigger ff_on_profile_created after insert on public.ff_profiles
 for each row execute function public.ff_handle_new_user();
 
-insert into public.ff_exercises (id,name,movement_pattern,primary_muscle,equipment,difficulty) values
-('11111111-1111-4111-8111-111111111111','Pull-ups','vertical_pull','Back & biceps',array['Pull-up bar'],3),
-('22222222-2222-4222-8222-222222222222','Push-ups','horizontal_push','Chest & triceps','{}',2),
-('33333333-3333-4333-8333-333333333333','Bulgarian split squats','knee_dominant','Quads & glutes',array['Bench'],3),
-('44444444-4444-4444-8444-444444444444','Dead bugs','core','Core','{}',1),
-('55555555-5555-4555-8555-555555555555','Band-assisted pull-ups','vertical_pull','Back & biceps',array['Pull-up bar','Resistance bands'],2),
-('66666666-6666-4666-8666-666666666666','Incline push-ups','horizontal_push','Chest & triceps',array['Bench'],1),
-('77777777-7777-4777-8777-777777777777','Bodyweight squats','knee_dominant','Quads & glutes','{}',1),
-('88888888-8888-4888-8888-888888888888','Pike push-ups','vertical_push','Shoulders & triceps','{}',3),
-('99999999-9999-4999-8999-999999999999','Ring rows','horizontal_pull','Back & biceps',array['Gym rings'],2),
-('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','Glute bridges','hip_hinge','Glutes & hamstrings','{}',1),
-('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','Squat jumps','plyo','Quads & calves','{}',3),
-('cccccccc-cccc-4ccc-8ccc-cccccccccccc','Bird dogs','core','Core & back','{}',1);
-insert into public.ff_substitutions(exercise_id,alt_exercise_id,reason) values
-('11111111-1111-4111-8111-111111111111','55555555-5555-4555-8555-555555555555','Add band assistance while building pulling strength.'),
-('22222222-2222-4222-8222-222222222222','66666666-6666-4666-8666-666666666666','Reduce the load with an elevated hand position.'),
-('33333333-3333-4333-8333-333333333333','77777777-7777-4777-8777-777777777777','No bench required; develop the squat pattern.'),
-('44444444-4444-4444-8444-444444444444','cccccccc-cccc-4ccc-8ccc-cccccccccccc','Alternative bodyweight core-control movement.');
+-- Populate the exercise library with npm run db:seed.
 commit;

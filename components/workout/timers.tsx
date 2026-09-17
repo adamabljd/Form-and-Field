@@ -1,0 +1,82 @@
+'use client';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Pause, Play, RotateCcw, Timer, Volume2, VolumeX, X } from 'lucide-react';
+
+export function useWorkoutSound() {
+  const context = useRef<AudioContext | null>(null);
+  const [enabled,setEnabled] = useState(true);
+  const prime = useCallback(() => {
+    if (!enabled) return;
+    try { context.current ??= new AudioContext(); void context.current.resume().catch(()=>{}); } catch { /* Visual alerts still work. */ }
+  },[enabled]);
+  const beep = useCallback(() => {
+    if (!enabled || !context.current || context.current.state !== 'running') return;
+    const audio = context.current;
+    const oscillator = audio.createOscillator(); const gain = audio.createGain();
+    oscillator.connect(gain); gain.connect(audio.destination);
+    oscillator.frequency.value = 740;
+    gain.gain.setValueAtTime(0.12,audio.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001,audio.currentTime+0.55);
+    oscillator.start(); oscillator.stop(audio.currentTime+0.6);
+  },[enabled]);
+  useEffect(()=>()=>{ void context.current?.close().catch(()=>{}); },[]);
+  return {enabled,setEnabled,prime,beep};
+}
+
+function useCountdown(onFinish:()=>void) {
+  const deadline = useRef<number|null>(null);
+  const remaining = useRef(0);
+  const callback = useRef(onFinish);
+  callback.current = onFinish;
+  const [seconds,setSeconds] = useState(0);
+  const [running,setRunning] = useState(false);
+  const [finished,setFinished] = useState(false);
+  const start = useCallback((duration:number) => {
+    remaining.current=duration*1000; deadline.current=Date.now()+remaining.current;
+    setSeconds(duration);setFinished(false);setRunning(true);
+  },[]);
+  const reset = useCallback(()=>{deadline.current=null;remaining.current=0;setSeconds(0);setRunning(false);setFinished(false);},[]);
+  const pause = () => {remaining.current=Math.max(0,(deadline.current || Date.now())-Date.now());deadline.current=null;setRunning(false);};
+  const resume = () => {if (remaining.current>0) {deadline.current=Date.now()+remaining.current;setRunning(true);}};
+  useEffect(()=>{
+    if (!running) return;
+    const tick = () => {
+      const left=Math.max(0,(deadline.current || Date.now())-Date.now());
+      remaining.current=left;setSeconds(Math.ceil(left/1000));
+      if (!left && deadline.current !== null) {deadline.current=null;setRunning(false);setFinished(true);callback.current();}
+    };
+    tick();const interval=setInterval(tick,100);
+    const visible=()=>{if(document.visibilityState==='visible') tick();};
+    document.addEventListener('visibilitychange',visible);
+    return ()=>{clearInterval(interval);document.removeEventListener('visibilitychange',visible);};
+  },[running]);
+  return {seconds,running,finished,start,reset,pause,resume};
+}
+
+export function RestTimer({signal,sound,onTick}:{signal:{id:number;seconds:number}|null;sound:ReturnType<typeof useWorkoutSound>;onTick:(state:{seconds:number;running:boolean;finished:boolean})=>void}) {
+  const {start,reset,...timer}=useCountdown(sound.beep);
+  useEffect(()=>{if(signal) start(signal.seconds);},[signal,start]);
+  useEffect(()=>{onTick({seconds:timer.seconds,running:timer.running,finished:timer.finished});},[timer.seconds,timer.running,timer.finished,onTick]);
+  return <section aria-label="Rest timer" className={`rounded-2xl border p-5 transition-colors ${timer.finished?'border-lime-400 bg-lime-400/10':'border-zinc-800 bg-zinc-900'}`}>
+    <div className="flex items-center justify-between"><h2 className="flex items-center gap-2 text-sm font-semibold"><Timer size={17} className="text-lime-400"/>Rest & reset</h2><button aria-label={sound.enabled?'Mute timer':'Enable timer sound'} onClick={()=>{sound.setEnabled(!sound.enabled);sound.prime();}} className="rounded-lg p-2 text-zinc-400 hover:text-white">{sound.enabled?<Volume2 size={17}/>:<VolumeX size={17}/>}</button></div>
+    <p className="my-5 text-center font-mono text-5xl font-medium tabular-nums tracking-tight">{String(Math.floor(timer.seconds/60)).padStart(2,'0')}<span className="text-zinc-600">:</span>{String(timer.seconds%60).padStart(2,'0')}</p>
+    <p role="status" className="mb-4 min-h-5 text-center text-xs text-lime-300">{timer.finished?'Rest complete. Ready for your next set.':timer.running?'Breathe. Let your next set be a good one.':timer.seconds?'Timer paused.':'Choose your recovery time.'}</p>
+    <div className="grid grid-cols-3 gap-2">{[30,60,90].map(seconds=><button key={seconds} onClick={()=>{sound.prime();start(seconds);}} className="rounded-lg border border-zinc-700 py-3 text-sm font-semibold hover:border-lime-400 hover:text-lime-300">{seconds}s</button>)}</div>
+    <div className="mt-3 flex gap-2"><button disabled={!timer.seconds} onClick={()=>{sound.prime();if(timer.running)timer.pause();else timer.resume();}} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-zinc-800 py-3 text-xs">{timer.running?<Pause size={14}/>:<Play size={14}/>} {timer.running?'Pause':'Resume'}</button><button aria-label="Reset rest timer" onClick={reset} className="rounded-lg bg-zinc-800 px-4"><RotateCcw size={15}/></button></div>
+    <p className="mt-3 text-[10px] leading-relaxed text-zinc-500">Keep this page open for sound. The countdown catches up when you return.</p>
+  </section>;
+}
+
+export function TempoModal({name,onClose,sound}:{name:string;onClose:()=>void;sound:ReturnType<typeof useWorkoutSound>}) {
+  const dialog=useRef<HTMLDialogElement>(null);
+  const [duration,setDuration]=useState(3);
+  const timer=useCountdown(sound.beep);
+  useEffect(()=>{dialog.current?.showModal();},[]);
+  return <dialog data-theme="dark" ref={dialog} onCancel={onClose} onClick={e=>{if(e.target===e.currentTarget)onClose();}} aria-labelledby="tempo-title" className="w-[calc(100%_-_2rem)] max-w-md rounded-3xl border border-zinc-700 bg-zinc-900 p-6 text-zinc-100 backdrop:bg-black/80">
+    <div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-bold uppercase tracking-[.2em] text-lime-400">Own the descent</p><h2 id="tempo-title" className="mt-2 text-xl font-semibold">Eccentric tempo</h2><p className="mt-1 text-xs text-zinc-400">{name}</p></div><button autoFocus onClick={onClose} aria-label="Close tempo timer" className="rounded-lg p-2"><X size={20}/></button></div>
+    <div className={`mx-auto my-8 flex h-44 w-44 flex-col items-center justify-center rounded-full border-4 ${timer.finished?'border-lime-400 bg-lime-400/10':'border-zinc-700'}`}><span className="font-mono text-7xl tabular-nums">{timer.finished?'✓':timer.seconds || duration}</span><span className="mt-2 text-xs uppercase tracking-widest text-zinc-400">{timer.running?'Lower slowly':timer.finished?'Descent done':'Seconds'}</span></div>
+    <p role="status" className="mb-5 text-center text-sm text-lime-300">{timer.finished?'Return with control, then start the next rep.':timer.running?'Control the full range of movement.':'One countdown guides one lowering phase.'}</p>
+    <label className="block text-xs text-zinc-400">Descent duration<select data-ui="select" disabled={timer.running} value={duration} onChange={e=>{setDuration(Number(e.target.value));timer.reset();}} className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 text-white">{[3,4,5,6].map(n=><option value={n} key={n}>{n} seconds</option>)}</select></label>
+    <button onClick={()=>{sound.prime();timer.start(duration);}} className="mt-5 w-full rounded-xl bg-lime-400 py-4 text-sm font-bold text-zinc-950">{timer.running?'Restart descent':timer.finished?'Next rep':'Start descent'}</button>
+  </dialog>;
+}
