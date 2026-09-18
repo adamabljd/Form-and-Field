@@ -17,10 +17,10 @@
 }
 [data-theme="dark"] {
   color-scheme: dark;
-  --control-bg: #102219;
-  --control-border: #355442;
+  --control-bg: #101d16;
+  --control-border: #3b5145;
   --control-text: #e6f1e9;
-  --control-muted: #8da999;
+  --control-muted: #a0b5a8;
   --control-hover: #628b72;
   --control-accent: #b0e862;
   --control-selected: #b0e862;
@@ -41,10 +41,10 @@ body { @apply bg-canvas text-ink antialiased; }
   dialog { box-shadow: 0 28px 100px rgb(0 0 0 / .4); }
 }
 @layer components {
-  .card { @apply rounded-2xl border border-line bg-white; }
+  .card { @apply rounded-2xl border border-line bg-white; box-shadow: 0 4px 24px -12px rgb(15 50 35 / .16); }
   .eyebrow { @apply text-[10px] font-bold uppercase tracking-[0.18em] text-muted; }
-  .btn { @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-accent px-5 py-3 text-sm font-semibold text-white  transition hover:bg-emerald-800; }
-  .field { @apply min-h-11 w-full rounded-xl border border-line bg-white px-4 py-3 text-sm outline-none; }
+  .btn { @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-accent px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800 hover:shadow-md; }
+  .field { @apply min-h-11 w-full rounded-xl border border-line bg-white px-4 py-3 text-sm shadow-sm outline-none transition hover:border-emerald-300; }
   .pitch-grid { background-image: linear-gradient(#ffffff09 1px,transparent 1px),linear-gradient(90deg,#ffffff09 1px,transparent 1px); background-size: 40px 40px; }
 }
 
@@ -114,4 +114,74 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .55; }
 }
 @media (forced-colors: active) {
   input[type="checkbox"], input[type="radio"], select[data-ui="select"] { appearance: auto; background-image: none; }
+}
+
+/* Shared interaction states keep every selection easy to spot. */
+label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) {
+  transition: border-color .18s, background-color .18s, box-shadow .18s;
+}
+label:has(> input:disabled) { cursor: not-allowed; }
+input[type="checkbox"]:checked, input[type="radio"]:checked {
+  box-shadow: 0 2px 8px var(--control-ring);
+}
+.equipment-option:has(input:checked) {
+  border-color: var(--control-accent);
+  box-shadow: inset 0 0 0 1px var(--control-ring);
+}
+.equipment-group > summary::after {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 1px solid var(--control-border);
+  border-radius: .6rem;
+  background: var(--control-bg);
+}
+select[data-ui="select"] { box-shadow: 0 1px 3px rgb(0 0 0 / .06); }
+dialog::backdrop { background: rgb(4 14 9 / .72); backdrop-filter: blur(6px); }
+
+/* Progressive enhancement: retain native keyboard/mobile selection everywhere,
+   and style the entire popup in browsers with customizable select support. */
+@supports (appearance: base-select) {
+  select[data-ui="select"], select[data-ui="select"]::picker(select) {
+    appearance: base-select;
+  }
+  select[data-ui="select"] {
+    background-image: none;
+    padding-right: .875rem;
+    align-items: center;
+    gap: .75rem;
+  }
+  select[data-ui="select"]::picker-icon {
+    color: var(--control-muted);
+    transition: rotate .18s;
+  }
+  select[data-ui="select"]:open::picker-icon { rotate: 180deg; }
+  select[data-ui="select"]::picker(select) {
+    margin-block: .5rem;
+    padding: .375rem;
+    border: 1px solid var(--control-border);
+    border-radius: 1rem;
+    background: var(--control-bg);
+    color: var(--control-text);
+    box-shadow: 0 12px 40px rgb(0 0 0 / .22);
+    max-height: min(22rem, 50dvh);
+    overflow-y: auto;
+  }
+  select[data-ui="select"] option {
+    min-height: 2.75rem;
+    padding: .75rem;
+    gap: .75rem;
+    border-radius: .625rem;
+    font-size: .875rem;
+    white-space: normal;
+  }
+  select[data-ui="select"] option:hover,
+  select[data-ui="select"] option:focus-visible,
+  select[data-ui="select"] option:checked {
+    background: var(--control-ring);
+    color: var(--control-text);
+  }
+  select[data-ui="select"] option::checkmark { color: var(--control-accent); }
+  select[data-ui="select"] option:disabled { opacity: .45; }
 }
