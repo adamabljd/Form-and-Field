@@ -1,0 +1,29 @@
+import { NextResponse } from 'next/server';
+import { revalidatePath } from 'next/cache';
+import { authenticateApi, readBody, apiError } from '@/lib/workout-api';
+import { EngineError, objectBody } from '@/lib/workout-engine';
+import { patterns } from '@/lib/training';
+
+export async function POST(request: Request) {
+  try {
+    const { supabase, user } = await authenticateApi();
+    const body = objectBody(await readBody(request));
+    const text = (value: unknown, max: number) => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max;
+    if (!text(body.name, 120) || !text(body.primary_muscle, 80)) throw new EngineError('Enter an exercise name and primary muscle.', 400);
+    if (!patterns.some(pattern => pattern === body.movement_pattern)) throw new EngineError('Choose a movement pattern.', 400);
+    if (!Number.isInteger(body.difficulty) || Number(body.difficulty) < 1 || Number(body.difficulty) > 5) throw new EngineError('Difficulty must be between 1 and 5.', 400);
+    if (!Array.isArray(body.equipment) || body.equipment.length > 160 || body.equipment.some(item => !text(item, 100))) throw new EngineError('Choose valid equipment.', 400);
+    let gif_url: string | null = null;
+    if (body.gif_url) {
+      try { const url = new URL(String(body.gif_url)); if (url.protocol !== 'https:' || url.username || url.password || url.href.length > 2000) throw new Error(); gif_url = url.href; }
+      catch { throw new EngineError('Use an HTTPS image URL.', 400); }
+    }
+    const { data, error } = await supabase.from('ff_exercises').insert({
+      user_id: user.id, name: String(body.name).trim(), primary_muscle: String(body.primary_muscle).trim(),
+      movement_pattern: body.movement_pattern, equipment: [...new Set(body.equipment)], difficulty: body.difficulty, gif_url,
+    }).select('id,name,primary_muscle,movement_pattern,equipment,difficulty,gif_url').single();
+    if (error) throw new EngineError('Unable to save exercise. Apply the custom-exercises migration first.', 503);
+    revalidatePath('/exercises'); revalidatePath('/workout/new');
+    return NextResponse.json({ exercise: data }, { status: 201 });
+  } catch (error) { return apiError(error); }
+}

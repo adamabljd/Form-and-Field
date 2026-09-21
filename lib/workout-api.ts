@@ -31,7 +31,7 @@ export async function readBody(request: Request) {
     const { value, done } = await reader.read();
     if (done) break;
     size += value.byteLength;
-    if (size > 16384) { await reader.cancel(); throw new EngineError('Request body is too large.', 413); }
+    if (size > 65536) { await reader.cancel(); throw new EngineError('Request body is too large.', 413); }
     chunks.push(value);
   }
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }

@@ -15,10 +15,10 @@ export default async function LiveWorkoutPage({ params, searchParams }: {
   const { data:plan,error } = await supabase.from('ff_workout_plans').select('id,name,program').eq('id',id).eq('user_id',user.id).maybeSingle();
   if (error) throw new Error('Unable to load workout.');
   if (!plan) notFound();
-  if (!isProgram(plan.program)) return <main className="min-h-screen bg-zinc-950 p-8 text-zinc-100"><h1 className="text-2xl font-semibold">Generate a four-day plan first.</h1><p className="my-4 text-zinc-400">This older plan does not have an exercise schedule.</p><Link href="/workout" className="text-lime-400">Back to workouts →</Link></main>;
+  if (!isProgram(plan.program)) return <main className="min-h-screen bg-white p-8 text-ink"><h1 className="text-2xl font-semibold">Create a program first.</h1><p className="my-4 text-muted">This older plan does not have an exercise schedule.</p><Link href="/workout" className="text-accent">Back to workouts →</Link></main>;
   const query = await searchParams;
   const dayIndex = query.day === undefined ? 0 : Number(query.day);
-  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex > 3 || (query.date && !validDate(query.date))) notFound();
+  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= plan.program.days.length || (query.date && !validDate(query.date))) notFound();
   // Client adds its local date when absent, so a late-night workout never changes date midway.
   const date = query.date || new Date().toISOString().slice(0,10);
   const day = plan.program.days[dayIndex];

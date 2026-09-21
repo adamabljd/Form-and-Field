@@ -43,7 +43,7 @@ create table public.ff_workout_plans (
       and jsonb_typeof(program->'match_days') = 'array'
       and jsonb_typeof(program->'warnings') = 'array'
       and case when jsonb_typeof(program->'days') = 'array'
-        then jsonb_array_length(program->'days') = 4 else false end
+        then jsonb_array_length(program->'days') between 1 and 7 else false end
     ), false)
   ),
   week_number int not null default 1 check (week_number > 0)
@@ -58,7 +58,7 @@ create table public.ff_workout_logs (
   completed boolean not null default false,
   date date not null default current_date,
   plan_id uuid references public.ff_workout_plans(id) on delete cascade,
-  session_day int check (session_day between 0 and 3),
+  session_day int check (session_day between 0 and 6),
   slot_index int check (slot_index between 0 and 49),
   set_index int check (set_index between 0 and 9),
   target_sets int check (target_sets between 1 and 10),
@@ -115,3 +115,10 @@ for each row execute function public.ff_handle_new_user();
 
 -- Populate the exercise library with npm run db:seed.
 commit;
+
+-- Private custom exercises
+alter table public.ff_exercises add column user_id uuid references auth.users(id) on delete cascade;
+drop policy "Read exercise library" on public.ff_exercises;
+create policy "Read exercise library" on public.ff_exercises for select to authenticated using (user_id is null or user_id = (select auth.uid()));
+create policy "Create own exercises" on public.ff_exercises for insert to authenticated with check (user_id = (select auth.uid()));
+grant insert on public.ff_exercises to authenticated;

@@ -62,7 +62,7 @@ export function parseSwapInput(value: unknown) {
   if (typeof body.current_exercise_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.current_exercise_id)) throw new EngineError('current_exercise_id must be a UUID.', 400);
   if (body.reason !== undefined && !swapReasons.includes(body.reason as SwapReason)) throw new EngineError('Unknown swap reason.', 400);
   if (body.plan_id !== undefined && (typeof body.plan_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.plan_id))) throw new EngineError('plan_id must be a UUID.', 400);
-  if (body.session_day !== undefined && (!Number.isInteger(body.session_day) || (body.session_day as number)<0 || (body.session_day as number)>3)) throw new EngineError('Invalid session day.',400);
+  if (body.session_day !== undefined && (!Number.isInteger(body.session_day) || (body.session_day as number)<0 || (body.session_day as number)>6)) throw new EngineError('Invalid session day.',400);
   const reps = body.current_reps ?? 8;
   if (!Number.isInteger(reps) || (reps as number) < 1 || (reps as number) > 100) throw new EngineError('current_reps must be an integer from 1 to 100.', 400);
   return { session_day: body.session_day as number | undefined, plan_id: body.plan_id as string | undefined, current_exercise_id: body.current_exercise_id, reason: body.reason as SwapReason | undefined, current_reps: reps as number };

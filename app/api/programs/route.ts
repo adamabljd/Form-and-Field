@@ -11,7 +11,7 @@ export async function POST(request: Request) {
     const body = objectBody(await readBody(request));
     if (typeof body.name !== 'string' || !body.name.trim() || body.name.trim().length>100) throw new EngineError('Give your program a name (up to 100 characters).',400);
     const input = parsePlanInput({equipment:body.equipment,match_days:body.match_days});
-    if (!Array.isArray(body.days) || body.days.length!==4) throw new EngineError('Create exactly four training days.',400);
+    if (!Array.isArray(body.days) || body.days.length<1 || body.days.length>7) throw new EngineError('Create between one and seven training days.',400);
     const library = await loadExercises(supabase);
     const usedDays = new Set<string>();
     const sessions: TrainingDay[] = body.days.map((raw,index)=>{

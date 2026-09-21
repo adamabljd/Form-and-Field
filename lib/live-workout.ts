@@ -13,7 +13,7 @@ export function isProgram(value: unknown): value is WeeklyProgram {
   if (!value || typeof value !== 'object') return false;
   const p = value as WeeklyProgram;
   return p.version === 1 && Array.isArray(p.equipment) && p.equipment.every(e => typeof e === 'string')
-    && Array.isArray(p.days) && p.days.length === 4 && p.days.every(day => typeof day.day === 'string'
+    && Array.isArray(p.days) && p.days.length >= 1 && p.days.length <= 7 && p.days.every(day => typeof day.day === 'string'
       && Array.isArray(day.exercises) && day.exercises.length > 0 && day.exercises.every(e =>
         typeof e.exercise_id === 'string' && uuidPattern.test(e.exercise_id) && Number.isInteger(e.sets) && e.sets > 0 && e.sets <= 10 && Number.isInteger(e.reps) && e.reps > 0 && e.reps <= 100));
 }

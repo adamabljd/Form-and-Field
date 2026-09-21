@@ -8,7 +8,7 @@ export async function GET(request:Request) {
     const params=new URL(request.url).searchParams;
     const id=params.get('exercise_id');const date=params.get('date');const plan=params.get('plan_id');
     const day=Number(params.get('day'));const slot=Number(params.get('slot'));
-    if(!id||!uuidPattern.test(id)||!plan||!uuidPattern.test(plan)||!validDate(date)||!Number.isInteger(day)||day<0||day>3||!Number.isInteger(slot)||slot<0||slot>49)throw new EngineError('Invalid history request.',400);
+    if(!id||!uuidPattern.test(id)||!plan||!uuidPattern.test(plan)||!validDate(date)||!Number.isInteger(day)||day<0||day>6||!Number.isInteger(slot)||slot<0||slot>49)throw new EngineError('Invalid history request.',400);
     const {data,error}=await supabase.from('ff_workout_logs')
       .select('id,date,plan_id,session_day,slot_index,set_index,sets,reps,weight_kg')
       .eq('user_id',user.id).eq('exercise_id',id).eq('completed',true).lte('date',date)
