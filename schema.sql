@@ -122,3 +122,8 @@ drop policy "Read exercise library" on public.ff_exercises;
 create policy "Read exercise library" on public.ff_exercises for select to authenticated using (user_id is null or user_id = (select auth.uid()));
 create policy "Create own exercises" on public.ff_exercises for insert to authenticated with check (user_id = (select auth.uid()));
 grant insert on public.ff_exercises to authenticated;
+
+create policy "Update own exercises" on public.ff_exercises for update to authenticated
+  using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+grant update (name, primary_muscle, movement_pattern, equipment, difficulty, gif_url)
+  on public.ff_exercises to authenticated;

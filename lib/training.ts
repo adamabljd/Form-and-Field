@@ -1,7 +1,7 @@
 export const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 export { equipmentOptions } from './equipment';
 export const patterns = ['vertical_push', 'horizontal_push', 'vertical_pull', 'horizontal_pull', 'knee_dominant', 'hip_hinge', 'plyo', 'core'] as const;
-export type Exercise = { id: string; name: string; movement_pattern: string; primary_muscle: string; equipment: string[]; gif_url: string | null; difficulty: number };
+export type Exercise = { id: string; user_id?: string | null; name: string; movement_pattern: string; primary_muscle: string; equipment: string[]; gif_url: string | null; difficulty: number };
 // Match the new home seed by name, independently of its database UUID.
 export function selectWorkoutExercises(exercises: Exercise[]): Exercise[] {
   const normalize = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
