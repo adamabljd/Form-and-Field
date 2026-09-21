@@ -3,12 +3,14 @@ import { revalidatePath } from 'next/cache';
 import { authenticateApi, readBody, loadExercises, apiError } from '@/lib/workout-api';
 import { compatibleEquipment, EngineError, objectBody, parsePlanInput, type TrainingDay, type WeeklyProgram } from '@/lib/workout-engine';
 import { sessionTypes, trainingStyles, matchesSession, matchesStyle, type TrainingStyle } from '@/lib/training-types';
+import { uuidPattern } from '@/lib/live-workout';
 import { days } from '@/lib/training';
 
-export async function POST(request: Request) {
+async function saveProgram(request: Request, editing: boolean) {
   try {
     const { supabase,user } = await authenticateApi();
     const body = objectBody(await readBody(request));
+    if (editing && (typeof body.id !== 'string' || !uuidPattern.test(body.id))) throw new EngineError('Invalid program ID.',400);
     if (typeof body.name !== 'string' || !body.name.trim() || body.name.trim().length>100) throw new EngineError('Give your program a name (up to 100 characters).',400);
     const input = parsePlanInput({equipment:body.equipment,match_days:body.match_days});
     if (!Array.isArray(body.days) || body.days.length<1 || body.days.length>7) throw new EngineError('Create between one and seven training days.',400);
@@ -46,9 +48,34 @@ export async function POST(request: Request) {
     const program: WeeklyProgram = {version:1,equipment:input.equipment,match_days:input.match_days,days:sessions,warnings};
     const {error:profileError}=await supabase.from('ff_profiles').upsert({id:user.id},{onConflict:'id',ignoreDuplicates:true});
     if(profileError)throw new EngineError('Unable to initialize your training profile.',503);
-    const {data,error}=await supabase.from('ff_workout_plans').insert({user_id:user.id,name:body.name.trim(),week_number:1,program}).select('id,name').single();
-    if(error)throw new EngineError('Unable to save your program. Check that the workout-engine migration is applied.',503);
+    let savedPlan: {id:string;name:string};
+    if(editing){
+      const {data,error}=await supabase.rpc('ff_edit_program',{p_id:body.id,p_name:body.name.trim(),p_program:program,p_delete:false});
+      if(error) throw new EngineError('Unable to update program. Apply the program-editing migration and try again.',503);
+      if(!data) throw new EngineError('Program not found.',404);
+      savedPlan={id:body.id as string,name:body.name.trim()};
+    }else{
+      const {data,error}=await supabase.from('ff_workout_plans').insert({user_id:user.id,name:body.name.trim(),week_number:1,program}).select('id,name').single();
+      if(error)throw new EngineError('Unable to save your program. Check that the workout-engine migration is applied.',503);
+      savedPlan=data;
+    }
+    revalidatePath('/workout/[id]','page');
     revalidatePath('/workout');revalidatePath('/dashboard');
-    return NextResponse.json({plan:data},{status:201,headers:{'Cache-Control':'private, no-store'}});
+    return NextResponse.json({plan:savedPlan},{status:editing?200:201,headers:{'Cache-Control':'private, no-store'}});
+  }catch(error){return apiError(error);}
+}
+
+export async function POST(request: Request) { return saveProgram(request,false); }
+export async function PATCH(request: Request) { return saveProgram(request,true); }
+export async function DELETE(request: Request) {
+  try {
+    const {supabase}=await authenticateApi();
+    const body=objectBody(await readBody(request));
+    if(typeof body.id!=='string'||!uuidPattern.test(body.id))throw new EngineError('Invalid program ID.',400);
+    const {data,error}=await supabase.rpc('ff_edit_program',{p_id:body.id,p_name:null,p_program:null,p_delete:true});
+    if(error)throw new EngineError('Unable to delete program. Apply the program-editing migration and try again.',503);
+    if(!data)throw new EngineError('Program not found.',404);
+    revalidatePath('/workout');revalidatePath('/dashboard');revalidatePath('/workout/[id]','page');
+    return NextResponse.json({deleted:true});
   }catch(error){return apiError(error);}
 }
