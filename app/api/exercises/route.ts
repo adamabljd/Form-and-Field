@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
-import { authenticateApi, readBody, apiError } from '@/lib/workout-api';
+import { authenticateApi, readBody, loadExercises, apiError } from '@/lib/workout-api';
 import { EngineError, objectBody } from '@/lib/workout-engine';
 import { uuidPattern } from '@/lib/live-workout';
 import { patterns } from '@/lib/training';
@@ -38,3 +38,8 @@ async function saveExercise(request: Request, editing: boolean) {
 
 export async function POST(request: Request) { return saveExercise(request, false); }
 export async function PATCH(request: Request) { return saveExercise(request, true); }
+
+export async function GET() {
+  try { const {supabase}=await authenticateApi(); return NextResponse.json({exercises:await loadExercises(supabase)},{headers:{'Cache-Control':'private, no-store'}}); }
+  catch(error){return apiError(error);}
+}

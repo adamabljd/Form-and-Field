@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRightLeft, Check, CheckCheck, ChevronRight, LoaderCircle, Timer, Plus, Minus, Save } from 'lucide-react';
 import { ExerciseImage } from '@/components/exercise-image';
 import { sessionLabel } from '@/lib/training-types';
-import { localDate } from '@/lib/training';
+import { ExercisePicker } from '@/components/programs/exercise-picker';
+import { localDate, type Exercise } from '@/lib/training';
 import { uuidPattern, type LiveSlot, type SwapCandidate, type SetResult } from '@/lib/live-workout';
 import { RestTimer, TempoModal, useWorkoutSound } from './timers';
 import { ExerciseHistory } from './exercise-history';
@@ -18,6 +19,30 @@ type Props = { planId:string;name:string;dayIndex:number;day:string;focus:string
 export function LiveWorkout({planId,name,dayIndex,day,focus,date,hasDate,initialSlots,schedule}:Props) {
   const router=useRouter();const sound=useWorkoutSound();
   const [slots,setSlots]=useState(initialSlots);
+  const [adding,setAdding]=useState(false);
+  const [pickerOpen,setPickerOpen]=useState(false);
+  const [library,setLibrary]=useState<Exercise[]>([]);
+  const [addError,setAddError]=useState('');
+  const addLock=useRef(false);
+  async function openExercisePicker(){
+    setAddError('');setAdding(true);
+    try{
+      const response=await fetch('/api/exercises');const body=await response.json();
+      if(!response.ok)throw new Error(body.error||'Unable to load exercises.');
+      setLibrary(body.exercises);setPickerOpen(true);
+    }catch(error){setAddError(error instanceof Error?error.message:'Unable to load exercises.');}
+    finally{setAdding(false);}
+  }
+  async function addExercise(exercise:Exercise){
+    if(addLock.current)return;
+    addLock.current=true;setAdding(true);setAddError('');
+    try{
+      const response=await fetch('/api/workout-exercise',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan_id:planId,day:dayIndex,exercise_id:exercise.id,expected_count:slots.length})});
+      const body=await response.json();if(!response.ok)throw new Error(body.error||'Unable to add exercise.');
+      setSlots(current=>[...current,{exercise:body.exercise,target:body.target,completed:[]}]);setPickerOpen(false);
+    }catch(error){setAddError(error instanceof Error?error.message:'Unable to add exercise.');setPickerOpen(false);}
+    finally{addLock.current=false;setAdding(false);}
+  }
   const [ready,setReady]=useState(false);
   const [busy,setBusy]=useState<number[]>([]);
   const saving=useRef(new Set<number>());
@@ -139,9 +164,10 @@ export function LiveWorkout({planId,name,dayIndex,day,focus,date,hasDate,initial
           <div aria-live="polite" className="text-xs">{busy.includes(index)?<span className="mt-3 flex items-center gap-2 text-muted"><LoaderCircle size={13} className="animate-spin"/>Saving…</span>:errors[index]?<p role="alert" className="mt-3 text-red-700">{errors[index]}</p>:null}</div>
           </div></div>
         </article>;
-      })}</div><aside className="space-y-4 lg:sticky lg:top-6"><RestTimer signal={rest} sound={sound} onTick={setRestView}/><section className="rounded-2xl border border-line bg-white p-5"><div className="my-4 flex items-baseline gap-2"><span className="text-3xl font-semibold text-accent">{done}</span><span className="text-sm text-muted">/ {total} sets</span></div><div role="progressbar" aria-label="Completed sets" aria-valuenow={done} aria-valuemin={0} aria-valuemax={total} className="h-1.5 overflow-hidden rounded-full bg-canvas"><div className="h-full rounded-full bg-accent transition-all" style={{width:`${total?done/total*100:0}%`}}/></div></section></aside></div>
+      })}<button disabled={!ready||adding||busy.length>0||slots.length>=10} onClick={()=>void openExercisePicker()} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-line bg-white px-4 py-3 text-sm font-medium"><Plus size={16}/>{adding?'Adding…':'Add exercise'}</button>{addError&&<p role="alert" className="text-sm text-red-700">{addError}</p>}</div><aside className="space-y-4 lg:sticky lg:top-6"><RestTimer signal={rest} sound={sound} onTick={setRestView}/><section className="rounded-2xl border border-line bg-white p-5"><div className="my-4 flex items-baseline gap-2"><span className="text-3xl font-semibold text-accent">{done}</span><span className="text-sm text-muted">/ {total} sets</span></div><div role="progressbar" aria-label="Completed sets" aria-valuenow={done} aria-valuemin={0} aria-valuemax={total} className="h-1.5 overflow-hidden rounded-full bg-canvas"><div className="h-full rounded-full bg-accent transition-all" style={{width:`${total?done/total*100:0}%`}}/></div></section></aside></div>
     </main>
     <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-white/95 px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur lg:hidden"><div className="mx-auto flex max-w-xl items-center justify-between"><span className="text-xs text-muted"><strong className="text-accent">{done}/{total}</strong> sets {busy.length?'· saving…':''}</span><button onClick={()=>{sound.prime();setRest({id:Date.now(),seconds:60});}} className="flex items-center gap-2 rounded-lg bg-accent px-4 py-3 text-xs font-bold text-white"><Timer size={15}/>{restView.running?`${String(Math.floor(restView.seconds/60)).padStart(2,'0')}:${String(restView.seconds%60).padStart(2,'0')} · restart`:'60s rest'}</button></div>{restView.finished&&<p role="status" className="mt-2 text-[11px] text-accent">Rest complete.</p>}</div>
+    {pickerOpen&&<ExercisePicker dayLabel={day} exercises={library} equipment={[]} selected={slots.map(slot=>slot.exercise.id)} busy={adding} onCreated={exercise=>setLibrary(current=>[exercise,...current])} onClose={()=>setPickerOpen(false)} onAdd={exercise=>void addExercise(exercise)}/>}
     {swapIndex!==null&&<SwapModal dayIndex={dayIndex} slot={slots[swapIndex]} planId={planId} onClose={()=>setSwapIndex(null)} onReplace={replace}/>}
     {tempoIndex!==null&&<TempoModal name={slots[tempoIndex].exercise.name} sound={sound} onClose={()=>setTempoIndex(null)}/>}
   </div>;

@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { authenticateApi, readBody, loadExercises, apiError } from '@/lib/workout-api';
-import { compatibleEquipment, EngineError, objectBody, parsePlanInput, type TrainingDay, type WeeklyProgram } from '@/lib/workout-engine';
-import { sessionTypes, trainingStyles, matchesSession, matchesStyle, type TrainingStyle } from '@/lib/training-types';
+import { EngineError, objectBody, parsePlanInput, type TrainingDay, type WeeklyProgram } from '@/lib/workout-engine';
+import { sessionTypes, trainingStyles, type TrainingStyle } from '@/lib/training-types';
 import { uuidPattern } from '@/lib/live-workout';
 import { days } from '@/lib/training';
 
@@ -30,10 +30,8 @@ async function saveProgram(request: Request, editing: boolean) {
         const item = objectBody(rawExercise);
         const exercise = library.find(e=>e.id===item.exercise_id);
         if (!exercise) throw new EngineError('An exercise was removed from the library. Choose another one.',422);
-        if (!matchesSession(exercise,session.focus as string) || !matchesStyle(exercise,style as string)) throw new EngineError(`${exercise.name} does not match this session type/style. Change the session selection or replace the exercise.`,422);
         if (exerciseIds.has(exercise.id)) throw new EngineError('Use an exercise only once per session; increase its sets instead.',400);
         exerciseIds.add(exercise.id);
-        if (!compatibleEquipment(exercise,input.equipment)) throw new EngineError(`Add the required equipment for ${exercise.name} or choose another exercise.`,422);
         for (const [key,max] of [['sets',10],['reps',100],['rest_seconds',300]] as const) {
           if (!Number.isInteger(item[key]) || (item[key] as number)<1 || (item[key] as number)>max) throw new EngineError(`Invalid ${key.replace('_',' ')} for ${exercise.name}.`,400);
         }

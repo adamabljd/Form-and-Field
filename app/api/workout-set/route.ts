@@ -1,10 +1,8 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { authenticateApi, readBody, apiError } from '@/lib/workout-api';
-import { EngineError, compatibleEquipment, objectBody } from '@/lib/workout-engine';
+import { EngineError, objectBody } from '@/lib/workout-engine';
 import { isProgram, uuidPattern, validDate } from '@/lib/live-workout';
-import { matchesStyle, matchesSession } from '@/lib/training-types';
-import type { Exercise } from '@/lib/training';
 
 export async function POST(request: Request) {
   try {
@@ -29,8 +27,7 @@ export async function POST(request: Request) {
     if (!slot) throw new EngineError('Workout slot not found.',404);
     const { data: exercise, error: exerciseError } = await supabase.from('ff_exercises').select('*').eq('id',body.exercise_id).maybeSingle();
     if (exerciseError) throw new EngineError('Unable to load exercise.',503);
-    if (!exercise || exercise.movement_pattern !== slot.movement_pattern || !compatibleEquipment(exercise as Exercise,plan.program.equipment)) throw new EngineError('Exercise is not compatible with this workout slot.',422);
-    if (!matchesStyle(exercise as Exercise,session.style||'mixed') || !matchesSession(exercise as Exercise,session.focus)) throw new EngineError('Exercise does not match this session type and training style.',422);
+    if (!exercise) throw new EngineError('Exercise not found.',404);
     const { data: otherSets, error: logError } = await supabase.from('ff_workout_logs').select('exercise_id').eq('user_id',user.id)
       .eq('plan_id',body.plan_id).eq('session_day',body.session_day).eq('slot_index',body.slot_index).eq('date',body.date).eq('completed',true).neq('set_index',body.set_index);
     if (logError) throw new EngineError('Unable to load sets. Apply the live-workout migration.',503);
