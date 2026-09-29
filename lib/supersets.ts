@@ -1,12 +1,18 @@
 import type { LiveSlot } from './live-workout';
-// Groups are adjacent runs. Split or single exercises lose their old group label.
+// Group identity is independent of its position in the workout.
 export function normalizeSupersets(slots: LiveSlot[]): LiveSlot[] {
-  return slots.map((slot,index)=>{
-    const group=slot.target.superset_id;
-    if(!group)return slot;
-    let start=index,end=index;
-    while(start>0&&slots[start-1].target.superset_id===group)start--;
-    while(end+1<slots.length&&slots[end+1].target.superset_id===group)end++;
-    return {...slot,target:{...slot.target,superset_id:end>start?`superset-${start}`:undefined}};
+  const counts=new Map<string,number>();
+  for(const slot of slots){const id=slot.target.superset_id;if(id)counts.set(id,(counts.get(id)||0)+1);}
+  return slots.map(slot=>slot.target.superset_id&&(counts.get(slot.target.superset_id)||0)<2
+    ? {...slot,target:{...slot.target,superset_id:undefined}} : slot);
+}
+export function workoutGroups(slots: LiveSlot[]): number[][] {
+  const groups:number[][]=[];
+  const byId=new Map<string,number[]>();
+  slots.forEach((slot,index)=>{
+    const id=slot.target.superset_id;
+    if(id&&byId.has(id)){byId.get(id)!.push(index);return;}
+    const group=[index];groups.push(group);if(id)byId.set(id,group);
   });
+  return groups;
 }

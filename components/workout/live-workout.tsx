@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowUp, ArrowDown, ArrowRightLeft, Check, CheckCheck, ChevronRight, LoaderCircle, Trash2, Plus, Minus, Save } from 'lucide-react';
-import { normalizeSupersets } from '@/lib/supersets';
+import { normalizeSupersets, workoutGroups } from '@/lib/supersets';
 import { ExerciseImage } from '@/components/exercise-image';
 import { sessionLabel } from '@/lib/training-types';
 import { ExercisePicker } from '@/components/programs/exercise-picker';
@@ -20,6 +20,7 @@ export function LiveWorkout({initialProgramIds,planId,name,dayIndex,day,focus,da
   const router=useRouter();
   const [slots,setSlots]=useState(initialSlots);
   const [programIds,setProgramIds]=useState(initialProgramIds);
+  const [groupSelection,setGroupSelection]=useState<number[]|null>(null);
   const [layoutBusy,setLayoutBusy]=useState(false);
   const layoutLock=useRef(false);
   async function saveLayout(order:number[],nextSlots:LiveSlot[]){
@@ -29,31 +30,28 @@ export function LiveWorkout({initialProgramIds,planId,name,dayIndex,day,focus,da
     try{
       const response=await fetch('/api/workout-exercise',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan_id:planId,day:dayIndex,order,expected_ids:programIds,groups:normalized.map(slot=>slot.target.superset_id||null)})});
       const body=await response.json();if(!response.ok)throw new Error(body.error||'Unable to save order.');
-      setSlots(normalized);setProgramIds(order.map(index=>programIds[index]));setErrors({});
+      setGroupSelection(null);setSlots(normalized);setProgramIds(order.map(index=>programIds[index]));setErrors({});
       try{for(const key of Object.keys(sessionStorage)){if(key.startsWith(`ff-live:${planId}:${dayIndex}:`))sessionStorage.removeItem(key);}}catch{/* Server layout is saved. */}
     }catch(error){setAddError(error instanceof Error?error.message:'Unable to save order.');}
     finally{layoutLock.current=false;setLayoutBusy(false);}
   }
   function moveExercise(index:number,direction:number){
-    const order=slots.map((_,i)=>i),other=index+direction;
-    if(other<0||other>=slots.length)return;
-    [order[index],order[other]]=[order[other],order[index]];
+    const groups=workoutGroups(slots);
+    const position=groups.findIndex(group=>group.includes(index)),other=position+direction;
+    if(other<0||other>=groups.length)return;
+    [groups[position],groups[other]]=[groups[other],groups[position]];
+    const order=groups.flat();
     void saveLayout(order,order.map(i=>slots[i]));
   }
-  function toggleSuperset(index:number){
-    const group=slots[index].target.superset_id;
-    const joined=Boolean(group&&group===slots[index+1]?.target.superset_id);
-    let next=slots.map(slot=>({...slot,target:{...slot.target}}));
-    if(joined){
-      let end=index+1;while(end<next.length&&next[end].target.superset_id===group){next[end].target.superset_id=`split-${index}`;end++;}
-    }else{
-      const right=next[index+1].target.superset_id;
-      let start=index,end=index+1;
-      while(start>0&&group&&next[start-1].target.superset_id===group)start--;
-      while(end+1<next.length&&right&&next[end+1].target.superset_id===right)end++;
-      next=next.map((slot,i)=>i>=start&&i<=end?{...slot,target:{...slot.target,superset_id:`joined-${index}`}}:slot);
-    }
-    void saveLayout(slots.map((_,i)=>i),next);
+  function createSuperset(){
+    if(!groupSelection||groupSelection.length<2)return;
+    const selected=[...groupSelection].sort((a,b)=>a-b);
+    const id=crypto.randomUUID();
+    const order=slots.flatMap((_,index)=>index===selected[0]?selected:selected.includes(index)?[]:[index]);
+    void saveLayout(order,order.map(index=>selected.includes(index)?{...slots[index],target:{...slots[index].target,superset_id:id}}:slots[index]));
+  }
+  function ungroup(id:string){
+    void saveLayout(slots.map((_,i)=>i),slots.map(slot=>slot.target.superset_id===id?{...slot,target:{...slot.target,superset_id:undefined}}:slot));
   }
   const [adding,setAdding]=useState(false);
   const [pickerOpen,setPickerOpen]=useState(false);
@@ -188,10 +186,15 @@ export function LiveWorkout({initialProgramIds,planId,name,dayIndex,day,focus,da
       <nav aria-label="Workout days" className="mb-7 flex gap-2 overflow-x-auto pb-1">{schedule.map((label,index)=><button key={label} disabled={busy.length>0||!ready||removing||adding||layoutBusy} onClick={()=>router.push(`/workout/${planId}?day=${index}&date=${date}`)} aria-current={index===dayIndex?'page':undefined} className={`flex shrink-0 items-center gap-3 rounded-xl border px-4 py-3 text-xs font-semibold ${index===dayIndex?'border-accent/40 bg-accent/10 text-accent':'border-line bg-white text-muted hover:text-ink'}`}>{label}<ChevronRight size={12}/></button>)}</nav>
       {storageError&&<p role="status" className="mb-4 text-xs text-amber-700">{storageError}</p>}
       {allDone&&<div role="status" className="mb-6 flex items-center gap-4 rounded-2xl border border-accent/40 bg-accent/10 p-5"><CheckCheck size={29} className="text-accent"/><div><h2 className="font-semibold text-accent">Session complete</h2></div></div>}
-      <div className="mx-auto max-w-4xl"><div className="space-y-5">{slots.map((slot,index)=>{
-        const locked=busy.includes(index)||!ready||removing||layoutBusy;const finished=slot.completed.length===slot.target.sets&&!slot.completed.some(n=>isDirty(slot,n));
+      <div className="mx-auto max-w-4xl">
+      <div className="mb-4"><button disabled={!ready||layoutBusy||removing||adding||busy.length>0} onClick={()=>setGroupSelection(groupSelection===null?[]:null)} className="rounded-xl border border-line bg-white px-4 py-3 text-sm">{groupSelection===null?'Create superset':'Cancel selection'}</button></div>
+      {groupSelection!==null&&<section className="mb-5 space-y-3 rounded-xl border border-line bg-white p-4"><p className="text-sm font-medium">Select exercises to group</p>{slots.map((slot,index)=><label key={index} className="flex min-h-11 items-center gap-3 text-sm"><input type="checkbox" disabled={layoutBusy||Boolean(slot.target.superset_id&&slots.filter(item=>item.target.superset_id===slot.target.superset_id).length>1)} checked={groupSelection.includes(index)} onChange={()=>setGroupSelection(current=>current?.includes(index)?current.filter(i=>i!==index):[...(current||[]),index])}/>{slot.exercise.name}{slot.target.superset_id&&slots.filter(item=>item.target.superset_id===slot.target.superset_id).length>1&&<span className="text-xs text-muted">Already grouped</span>}</label>)}<button disabled={layoutBusy||groupSelection.length<2} onClick={createSuperset} className="btn">{layoutBusy?'Saving…':'Group exercises'}</button></section>}
+      <div className="space-y-5">{workoutGroups(slots).map((group,groupIndex)=><section key={slots[group[0]].target.superset_id||`single-${group[0]}`} className={group.length>1?'space-y-2 rounded-2xl border-2 border-accent/30 bg-accent/5 p-3':'space-y-2'}>
+      {group.length>1&&<div className="flex items-center justify-between px-2 py-1"><h2 className="text-sm font-semibold">Superset</h2><button disabled={layoutBusy||removing||adding||busy.length>0||groupSelection!==null} onClick={()=>ungroup(slots[group[0]].target.superset_id!)} className="min-h-10 px-2 text-xs text-muted">Ungroup</button></div>}
+      {group.map(index=>{const slot=slots[index];
+        const locked=busy.includes(index)||!ready||removing||layoutBusy||groupSelection!==null;const finished=slot.completed.length===slot.target.sets&&!slot.completed.some(n=>isDirty(slot,n));
         return <article key={index} className={`overflow-hidden rounded-2xl border ${finished?'border-accent/40':'border-line'} bg-white`}>
-          <div className="flex flex-wrap items-start justify-between gap-4 p-5 sm:p-6"><div className="flex gap-3"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${finished?'bg-accent/15 text-accent':'bg-canvas text-muted'}`}>{finished?<Check size={18}/>:String(index+1).padStart(2,'0')}</span><div>{slot.target.superset_id&&slots.filter(item=>item.target.superset_id===slot.target.superset_id).length>1&&<p className="mb-1 text-xs font-medium text-accent">Superset {slots.findIndex(item=>item.target.superset_id===slot.target.superset_id)+1}</p>}<h2 className="text-lg font-semibold">{slot.exercise.name}</h2><p className="mt-1.5 text-xs text-muted"><span className="font-bold text-accent">{slot.target.sets} × {slot.target.reps}</span> reps{slot.target.per_side?' per side':''}</p></div></div><div className="flex flex-wrap gap-2"><button disabled={locked||adding||busy.length>0||index===0} onClick={()=>moveExercise(index,-1)} aria-label={`Move ${slot.exercise.name} up`} className="rounded-lg border border-line p-2.5"><ArrowUp size={16}/></button><button disabled={locked||adding||busy.length>0||index===slots.length-1} onClick={()=>moveExercise(index,1)} aria-label={`Move ${slot.exercise.name} down`} className="rounded-lg border border-line p-2.5"><ArrowDown size={16}/></button><button disabled={locked||slot.completed.length>0} title={slot.completed.length?'Undo completed sets before swapping this slot.':'Find an alternative'} onClick={()=>setSwapIndex(index)} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2.5 text-xs font-medium text-ink hover:border-accent hover:text-accent"><ArrowRightLeft size={14}/>Swap</button><button disabled={locked||adding||busy.length>0} onClick={()=>void removeExercise(index)} aria-label={`Remove ${slot.exercise.name}`} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2.5 text-xs text-muted"><Trash2 size={14}/>Remove</button></div></div>
+          <div className="flex flex-wrap items-start justify-between gap-4 p-5 sm:p-6"><div className="flex gap-3"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${finished?'bg-accent/15 text-accent':'bg-canvas text-muted'}`}>{finished?<Check size={18}/>:String(index+1).padStart(2,'0')}</span><div><h2 className="text-lg font-semibold">{slot.exercise.name}</h2><p className="mt-1.5 text-xs text-muted"><span className="font-bold text-accent">{slot.target.sets} × {slot.target.reps}</span> reps{slot.target.per_side?' per side':''}</p></div></div><div className="flex flex-wrap gap-2">{index===group[0]&&<><button disabled={locked||adding||busy.length>0||groupIndex===0} onClick={()=>moveExercise(index,-1)} aria-label={`Move ${slot.exercise.name} up`} className="rounded-lg border border-line p-2.5"><ArrowUp size={16}/></button><button disabled={locked||adding||busy.length>0||groupIndex===workoutGroups(slots).length-1} onClick={()=>moveExercise(index,1)} aria-label={`Move ${slot.exercise.name} down`} className="rounded-lg border border-line p-2.5"><ArrowDown size={16}/></button></>}<button disabled={locked||slot.completed.length>0} title={slot.completed.length?'Undo completed sets before swapping this slot.':'Find an alternative'} onClick={()=>setSwapIndex(index)} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2.5 text-xs font-medium text-ink hover:border-accent hover:text-accent"><ArrowRightLeft size={14}/>Swap</button><button disabled={locked||adding||busy.length>0} onClick={()=>void removeExercise(index)} aria-label={`Remove ${slot.exercise.name}`} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2.5 text-xs text-muted"><Trash2 size={14}/>Remove</button></div></div>
           <div className="grid gap-5 px-5 pb-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:px-6 sm:pb-6"><div><ExerciseImage key={slot.exercise.id} name={slot.exercise.name} url={slot.exercise.gif_url} className="rounded-xl"/><ExerciseHistory key={slot.exercise.id} exerciseId={slot.exercise.id} planId={planId} dayIndex={dayIndex} slotIndex={index} date={date} onUse={(reps,weight)=>applyHistoryToSets(index,reps,weight)}/></div>
           <div>
           <div className="mb-2 grid grid-cols-[2rem_1fr_1fr_2rem] gap-2 px-3 text-[10px] text-muted"><span>Set</span><span>Reps{slot.target.per_side?' / side':''}</span><span>Weight (kg)</span><span>Done</span></div>
@@ -209,9 +212,9 @@ export function LiveWorkout({initialProgramIds,planId,name,dayIndex,day,focus,da
           
           <div aria-live="polite" className="text-xs">{busy.includes(index)?<span className="mt-3 flex items-center gap-2 text-muted"><LoaderCircle size={13} className="animate-spin"/>Saving…</span>:errors[index]?<p role="alert" className="mt-3 text-red-700">{errors[index]}</p>:null}</div>
           </div></div>
-          {index<slots.length-1&&<label className="mx-5 mb-4 flex min-h-10 items-center gap-2 text-xs text-muted"><input type="checkbox" disabled={locked||adding||busy.length>0} checked={Boolean(slot.target.superset_id&&slot.target.superset_id===slots[index+1].target.superset_id)} onChange={()=>toggleSuperset(index)}/>Superset with next</label>}
+
         </article>;
-      })}<button disabled={!ready||layoutBusy||adding||removing||busy.length>0||slots.length>=10} onClick={()=>void openExercisePicker()} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-line bg-white px-4 py-3 text-sm font-medium"><Plus size={16}/>{adding?'Adding…':'Add exercise'}</button>{addError&&<p role="alert" className="text-sm text-red-700">{addError}</p>}</div></div>
+      })}</section>)}<button disabled={!ready||groupSelection!==null||layoutBusy||adding||removing||busy.length>0||slots.length>=10} onClick={()=>void openExercisePicker()} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-line bg-white px-4 py-3 text-sm font-medium"><Plus size={16}/>{adding?'Adding…':'Add exercise'}</button>{addError&&<p role="alert" className="text-sm text-red-700">{addError}</p>}</div></div>
     </main>
     {pickerOpen&&<ExercisePicker dayLabel={day} exercises={library} equipment={[]} selected={slots.map(slot=>slot.exercise.id)} busy={adding} onCreated={exercise=>setLibrary(current=>[exercise,...current])} onClose={()=>setPickerOpen(false)} onAdd={exercise=>void addExercise(exercise)}/>}
     {swapIndex!==null&&<SwapModal dayIndex={dayIndex} slot={slots[swapIndex]} planId={planId} onClose={()=>setSwapIndex(null)} onReplace={replace}/>}
