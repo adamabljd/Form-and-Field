@@ -35,7 +35,8 @@ async function saveProgram(request: Request, editing: boolean) {
         for (const [key,max] of [['sets',10],['reps',100],['rest_seconds',300]] as const) {
           if (!Number.isInteger(item[key]) || (item[key] as number)<1 || (item[key] as number)>max) throw new EngineError(`Invalid ${key.replace('_',' ')} for ${exercise.name}.`,400);
         }
-        return {exercise_id:exercise.id,name:exercise.name,movement_pattern:exercise.movement_pattern,
+        if(item.superset_id!==undefined&&(typeof item.superset_id!=='string'||item.superset_id.length>80))throw new EngineError('Invalid superset.',400);
+        return {superset_id:item.superset_id as string|undefined,exercise_id:exercise.id,name:exercise.name,movement_pattern:exercise.movement_pattern,
           sets:item.sets as number,reps:item.reps as number,rest_seconds:item.rest_seconds as number,
           per_side:/single[ -]?leg|one[ -]?leg|split squat|lunge|lateral bound/i.test(exercise.name)};
       });

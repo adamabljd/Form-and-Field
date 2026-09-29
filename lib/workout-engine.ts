@@ -7,7 +7,7 @@ export type SwapReason = typeof swapReasons[number];
 export type PlanInput = { equipment: string[]; match_days: string[]; week_number: number; goal?: 'balanced' | 'strength' | 'football'; experience?: 'beginner' | 'intermediate' | 'advanced'; session_minutes?: number; training_days?: string[]; split?: 'hybrid' | 'upper_lower' | 'push_pull'; training_style?: TrainingStyle };
 export type Prescription = {
   exercise_id: string; name: string; movement_pattern: string;
-  sets: number; reps: number; rest_seconds: number; per_side: boolean;
+  sets: number; reps: number; rest_seconds: number; per_side: boolean; superset_id?: string;
 };
 export type TrainingDay = { day: string; focus: SessionType; style?: TrainingStyle; exercises: Prescription[] };
 export type WeeklyProgram = {

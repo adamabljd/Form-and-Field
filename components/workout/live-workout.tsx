@@ -2,7 +2,8 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRightLeft, Check, CheckCheck, ChevronRight, LoaderCircle, Trash2, Plus, Minus, Save } from 'lucide-react';
+import { ArrowLeft, ArrowUp, ArrowDown, ArrowRightLeft, Check, CheckCheck, ChevronRight, LoaderCircle, Trash2, Plus, Minus, Save } from 'lucide-react';
+import { normalizeSupersets } from '@/lib/supersets';
 import { ExerciseImage } from '@/components/exercise-image';
 import { sessionLabel } from '@/lib/training-types';
 import { ExercisePicker } from '@/components/programs/exercise-picker';
@@ -14,10 +15,46 @@ import { SwapModal } from './swap-modal';
 const resultFor=(slot:LiveSlot,index:number):SetResult=>slot.results?.[index] || {reps:slot.target.reps,weight_kg:slot.exercise.equipment.some(item=>/20\s?kg/i.test(item))?20:0};
 const isDirty=(slot:LiveSlot,index:number)=>{const result=resultFor(slot,index);return slot.completed.includes(index)&&(!result.saved||result.reps!==result.saved.reps||result.weight_kg!==result.saved.weight_kg);};
 
-type Props = { planId:string;name:string;dayIndex:number;day:string;focus:string;date:string;hasDate:boolean;initialSlots:LiveSlot[];schedule:string[] };
-export function LiveWorkout({planId,name,dayIndex,day,focus,date,hasDate,initialSlots,schedule}:Props) {
+type Props = { initialProgramIds:string[];planId:string;name:string;dayIndex:number;day:string;focus:string;date:string;hasDate:boolean;initialSlots:LiveSlot[];schedule:string[] };
+export function LiveWorkout({initialProgramIds,planId,name,dayIndex,day,focus,date,hasDate,initialSlots,schedule}:Props) {
   const router=useRouter();
   const [slots,setSlots]=useState(initialSlots);
+  const [programIds,setProgramIds]=useState(initialProgramIds);
+  const [layoutBusy,setLayoutBusy]=useState(false);
+  const layoutLock=useRef(false);
+  async function saveLayout(order:number[],nextSlots:LiveSlot[]){
+    if(layoutLock.current||saving.current.size||removeLock.current||adding)return;
+    layoutLock.current=true;setLayoutBusy(true);setAddError('');
+    const normalized=normalizeSupersets(nextSlots);
+    try{
+      const response=await fetch('/api/workout-exercise',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan_id:planId,day:dayIndex,order,expected_ids:programIds,groups:normalized.map(slot=>slot.target.superset_id||null)})});
+      const body=await response.json();if(!response.ok)throw new Error(body.error||'Unable to save order.');
+      setSlots(normalized);setProgramIds(order.map(index=>programIds[index]));setErrors({});
+      try{for(const key of Object.keys(sessionStorage)){if(key.startsWith(`ff-live:${planId}:${dayIndex}:`))sessionStorage.removeItem(key);}}catch{/* Server layout is saved. */}
+    }catch(error){setAddError(error instanceof Error?error.message:'Unable to save order.');}
+    finally{layoutLock.current=false;setLayoutBusy(false);}
+  }
+  function moveExercise(index:number,direction:number){
+    const order=slots.map((_,i)=>i),other=index+direction;
+    if(other<0||other>=slots.length)return;
+    [order[index],order[other]]=[order[other],order[index]];
+    void saveLayout(order,order.map(i=>slots[i]));
+  }
+  function toggleSuperset(index:number){
+    const group=slots[index].target.superset_id;
+    const joined=Boolean(group&&group===slots[index+1]?.target.superset_id);
+    let next=slots.map(slot=>({...slot,target:{...slot.target}}));
+    if(joined){
+      let end=index+1;while(end<next.length&&next[end].target.superset_id===group){next[end].target.superset_id=`split-${index}`;end++;}
+    }else{
+      const right=next[index+1].target.superset_id;
+      let start=index,end=index+1;
+      while(start>0&&group&&next[start-1].target.superset_id===group)start--;
+      while(end+1<next.length&&right&&next[end+1].target.superset_id===right)end++;
+      next=next.map((slot,i)=>i>=start&&i<=end?{...slot,target:{...slot.target,superset_id:`joined-${index}`}}:slot);
+    }
+    void saveLayout(slots.map((_,i)=>i),next);
+  }
   const [adding,setAdding]=useState(false);
   const [pickerOpen,setPickerOpen]=useState(false);
   const [library,setLibrary]=useState<Exercise[]>([]);
@@ -38,7 +75,7 @@ export function LiveWorkout({planId,name,dayIndex,day,focus,date,hasDate,initial
     try{
       const response=await fetch('/api/workout-exercise',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan_id:planId,day:dayIndex,exercise_id:exercise.id,expected_count:slots.length})});
       const body=await response.json();if(!response.ok)throw new Error(body.error||'Unable to add exercise.');
-      setSlots(current=>[...current,{exercise:body.exercise,target:body.target,completed:[]}]);setPickerOpen(false);
+      setSlots(current=>[...current,{exercise:body.exercise,target:body.target,completed:[]}]);setProgramIds(current=>[...current,body.exercise.id]);setPickerOpen(false);
     }catch(error){setAddError(error instanceof Error?error.message:'Unable to add exercise.');setPickerOpen(false);}
     finally{addLock.current=false;setAdding(false);}
   }
@@ -51,13 +88,13 @@ export function LiveWorkout({planId,name,dayIndex,day,focus,date,hasDate,initial
   const [removing,setRemoving]=useState(false);
   const removeLock=useRef(false);
   async function removeExercise(index:number){
-    if(removeLock.current||saving.current.size||adding)return;
+    if(layoutLock.current||removeLock.current||saving.current.size||adding)return;
     if(!window.confirm(`Remove ${slots[index].exercise.name} from ${day}? Saved history will be kept.`))return;
     removeLock.current=true;setRemoving(true);setAddError('');
     try{
       const response=await fetch('/api/workout-exercise',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan_id:planId,day:dayIndex,slot_index:index,expected_count:slots.length})});
       const body=await response.json();if(!response.ok)throw new Error(body.error||'Unable to remove exercise.');
-      setSlots(current=>current.filter((_,i)=>i!==index));setErrors({});setSwapIndex(null);
+      setSlots(current=>normalizeSupersets(current.filter((_,i)=>i!==index)));setProgramIds(current=>current.filter((_,i)=>i!==index));setErrors({});setSwapIndex(null);
       try{for(const key of Object.keys(sessionStorage)){if(key.startsWith(`ff-live:${planId}:${dayIndex}:`))sessionStorage.removeItem(key);}}catch{/* History remains saved on the server. */}
     }catch(error){setAddError(error instanceof Error?error.message:'Unable to remove exercise.');}
     finally{removeLock.current=false;setRemoving(false);}
@@ -79,7 +116,7 @@ export function LiveWorkout({planId,name,dayIndex,day,focus,date,hasDate,initial
           || !Number.isInteger(saved.target.reps) || saved.target.reps<1 || saved.target.reps>100) return slot;
         if(slot.completed.length&&saved.exercise.id!==slot.exercise.id)return slot;
         const count=Math.max(saved.target.sets,...slot.completed.map(n=>n+1));
-        return {...slot,exercise:saved.exercise,target:{...saved.target,sets:count},results:Array.from({length:count},(_,i)=>{
+        return {...slot,exercise:saved.exercise,target:{...saved.target,sets:count,superset_id:slot.target.superset_id},results:Array.from({length:count},(_,i)=>{
           if(slot.completed.includes(i))return resultFor(slot,i);
           const result=saved.results?.[i];
           return result&&Number.isInteger(result.reps)&&result.reps>0&&result.reps<=100&&Number.isFinite(result.weight_kg)&&result.weight_kg>=0&&result.weight_kg<=1000?{reps:result.reps,weight_kg:result.weight_kg}:resultFor({...slot,target:saved.target,exercise:saved.exercise},i);
@@ -101,7 +138,7 @@ export function LiveWorkout({planId,name,dayIndex,day,focus,date,hasDate,initial
   },[busy.length,hasUnsaved]);
 
   async function toggleSet(index:number,setIndex:number,saveEdit=false) {
-    if(!ready||removeLock.current||saving.current.has(index))return;
+    if(!ready||layoutLock.current||removeLock.current||saving.current.has(index))return;
     const slot=slots[index];const completed=saveEdit||!slot.completed.includes(setIndex);
     const draft=resultFor(slot,setIndex);
     const actual=!completed&&draft.saved?draft.saved:draft;
@@ -122,20 +159,20 @@ export function LiveWorkout({planId,name,dayIndex,day,focus,date,hasDate,initial
     }finally{saving.current.delete(index);setBusy([...saving.current]);}
   }
   function editResult(index:number,setIndex:number,field:'reps'|'weight_kg',value:number) {
-    if(saving.current.has(index))return;
+    if(layoutLock.current||removeLock.current||saving.current.has(index))return;
     setSlots(current=>current.map((slot,i)=>i===index?{...slot,results:Array.from({length:slot.target.sets},(_,j)=>j===setIndex?{...resultFor(slot,j),[field]:value}:resultFor(slot,j))}:slot));
   }
   function resizeSets(index:number,change:number) {
     const slot=slots[index];const count=slot.target.sets+change;
-    if(saving.current.has(index)||count<1||count>10||slot.completed.some(n=>n>=count))return;
+    if(layoutLock.current||removeLock.current||saving.current.has(index)||count<1||count>10||slot.completed.some(n=>n>=count))return;
     setSlots(current=>current.map((row,i)=>i===index?{...row,target:{...row.target,sets:count},results:Array.from({length:count},(_,j)=>resultFor(row,j))}:row));
   }
   function applyHistoryToSets(index:number,reps:number,weight:number) {
-    if(saving.current.has(index))return;
+    if(layoutLock.current||removeLock.current||saving.current.has(index))return;
     setSlots(current=>current.map((slot,i)=>i===index?{...slot,results:Array.from({length:slot.target.sets},(_,j)=>slot.completed.includes(j)?resultFor(slot,j):{reps,weight_kg:weight})}:slot));
   }
   function replace(candidate:SwapCandidate) {
-    if(swapIndex===null||saving.current.has(swapIndex)||slots[swapIndex].completed.length)return;
+    if(layoutLock.current||removeLock.current||swapIndex===null||saving.current.has(swapIndex)||slots[swapIndex].completed.length)return;
     setSlots(current=>current.map((slot,index)=>index===swapIndex?{
       exercise:candidate,completed:[],results:undefined,target:{...slot.target,exercise_id:candidate.id,name:candidate.name,movement_pattern:candidate.movement_pattern,
         sets:candidate.target_sets,reps:candidate.target_reps,per_side:/single[ -]?leg|one[ -]?leg|split squat|lunge|lateral bound/i.test(candidate.name)},
@@ -145,16 +182,16 @@ export function LiveWorkout({planId,name,dayIndex,day,focus,date,hasDate,initial
   const done=slots.reduce((sum,slot)=>sum+slot.completed.length,0);
   const allDone=total>0&&done===total&&!busy.length&&!Object.values(errors).some(Boolean)&&!hasUnsaved;
   return <div data-theme="light" className="min-h-screen bg-canvas text-ink selection:bg-accent selection:text-white">
-    <header className="border-b border-line bg-white/95"><div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-5 sm:px-8"><Link href="/workout" onClick={e=>{if(busy.length||removing||adding)e.preventDefault();}} className="flex items-center gap-2 text-xs font-semibold text-muted hover:text-ink"><ArrowLeft size={17}/>Programs</Link><span className="text-sm font-extrabold tracking-tight">form<span className="text-muted">&</span>field<span className="text-accent">.</span></span></div></header>
+    <header className="border-b border-line bg-white/95"><div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-5 sm:px-8"><Link href="/workout" onClick={e=>{if(busy.length||removing||adding||layoutBusy)e.preventDefault();}} className="flex items-center gap-2 text-xs font-semibold text-muted hover:text-ink"><ArrowLeft size={17}/>Programs</Link><span className="text-sm font-extrabold tracking-tight">form<span className="text-muted">&</span>field<span className="text-accent">.</span></span></div></header>
     <main className="mx-auto max-w-6xl px-5 pb-10 pt-8 sm:px-8">
       <div className="mb-5"><h1 className="text-2xl font-semibold">{name}</h1><p className="mt-1 text-xs text-muted">{day} · {sessionLabel(focus)} · {date}</p></div>
-      <nav aria-label="Workout days" className="mb-7 flex gap-2 overflow-x-auto pb-1">{schedule.map((label,index)=><button key={label} disabled={busy.length>0||!ready||removing||adding} onClick={()=>router.push(`/workout/${planId}?day=${index}&date=${date}`)} aria-current={index===dayIndex?'page':undefined} className={`flex shrink-0 items-center gap-3 rounded-xl border px-4 py-3 text-xs font-semibold ${index===dayIndex?'border-accent/40 bg-accent/10 text-accent':'border-line bg-white text-muted hover:text-ink'}`}>{label}<ChevronRight size={12}/></button>)}</nav>
+      <nav aria-label="Workout days" className="mb-7 flex gap-2 overflow-x-auto pb-1">{schedule.map((label,index)=><button key={label} disabled={busy.length>0||!ready||removing||adding||layoutBusy} onClick={()=>router.push(`/workout/${planId}?day=${index}&date=${date}`)} aria-current={index===dayIndex?'page':undefined} className={`flex shrink-0 items-center gap-3 rounded-xl border px-4 py-3 text-xs font-semibold ${index===dayIndex?'border-accent/40 bg-accent/10 text-accent':'border-line bg-white text-muted hover:text-ink'}`}>{label}<ChevronRight size={12}/></button>)}</nav>
       {storageError&&<p role="status" className="mb-4 text-xs text-amber-700">{storageError}</p>}
       {allDone&&<div role="status" className="mb-6 flex items-center gap-4 rounded-2xl border border-accent/40 bg-accent/10 p-5"><CheckCheck size={29} className="text-accent"/><div><h2 className="font-semibold text-accent">Session complete</h2></div></div>}
       <div className="mx-auto max-w-4xl"><div className="space-y-5">{slots.map((slot,index)=>{
-        const locked=busy.includes(index)||!ready||removing;const finished=slot.completed.length===slot.target.sets&&!slot.completed.some(n=>isDirty(slot,n));
+        const locked=busy.includes(index)||!ready||removing||layoutBusy;const finished=slot.completed.length===slot.target.sets&&!slot.completed.some(n=>isDirty(slot,n));
         return <article key={index} className={`overflow-hidden rounded-2xl border ${finished?'border-accent/40':'border-line'} bg-white`}>
-          <div className="flex flex-wrap items-start justify-between gap-4 p-5 sm:p-6"><div className="flex gap-3"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${finished?'bg-accent/15 text-accent':'bg-canvas text-muted'}`}>{finished?<Check size={18}/>:String(index+1).padStart(2,'0')}</span><div><h2 className="text-lg font-semibold">{slot.exercise.name}</h2><p className="mt-1.5 text-xs text-muted"><span className="font-bold text-accent">{slot.target.sets} × {slot.target.reps}</span> reps{slot.target.per_side?' per side':''}</p></div></div><div className="flex gap-2"><button disabled={locked||slot.completed.length>0} title={slot.completed.length?'Undo completed sets before swapping this slot.':'Find an alternative'} onClick={()=>setSwapIndex(index)} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2.5 text-xs font-medium text-ink hover:border-accent hover:text-accent"><ArrowRightLeft size={14}/>Swap</button><button disabled={locked||adding||busy.length>0} onClick={()=>void removeExercise(index)} aria-label={`Remove ${slot.exercise.name}`} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2.5 text-xs text-muted"><Trash2 size={14}/>Remove</button></div></div>
+          <div className="flex flex-wrap items-start justify-between gap-4 p-5 sm:p-6"><div className="flex gap-3"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${finished?'bg-accent/15 text-accent':'bg-canvas text-muted'}`}>{finished?<Check size={18}/>:String(index+1).padStart(2,'0')}</span><div>{slot.target.superset_id&&slots.filter(item=>item.target.superset_id===slot.target.superset_id).length>1&&<p className="mb-1 text-xs font-medium text-accent">Superset {slots.findIndex(item=>item.target.superset_id===slot.target.superset_id)+1}</p>}<h2 className="text-lg font-semibold">{slot.exercise.name}</h2><p className="mt-1.5 text-xs text-muted"><span className="font-bold text-accent">{slot.target.sets} × {slot.target.reps}</span> reps{slot.target.per_side?' per side':''}</p></div></div><div className="flex flex-wrap gap-2"><button disabled={locked||adding||busy.length>0||index===0} onClick={()=>moveExercise(index,-1)} aria-label={`Move ${slot.exercise.name} up`} className="rounded-lg border border-line p-2.5"><ArrowUp size={16}/></button><button disabled={locked||adding||busy.length>0||index===slots.length-1} onClick={()=>moveExercise(index,1)} aria-label={`Move ${slot.exercise.name} down`} className="rounded-lg border border-line p-2.5"><ArrowDown size={16}/></button><button disabled={locked||slot.completed.length>0} title={slot.completed.length?'Undo completed sets before swapping this slot.':'Find an alternative'} onClick={()=>setSwapIndex(index)} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2.5 text-xs font-medium text-ink hover:border-accent hover:text-accent"><ArrowRightLeft size={14}/>Swap</button><button disabled={locked||adding||busy.length>0} onClick={()=>void removeExercise(index)} aria-label={`Remove ${slot.exercise.name}`} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2.5 text-xs text-muted"><Trash2 size={14}/>Remove</button></div></div>
           <div className="grid gap-5 px-5 pb-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:px-6 sm:pb-6"><div><ExerciseImage key={slot.exercise.id} name={slot.exercise.name} url={slot.exercise.gif_url} className="rounded-xl"/><ExerciseHistory key={slot.exercise.id} exerciseId={slot.exercise.id} planId={planId} dayIndex={dayIndex} slotIndex={index} date={date} onUse={(reps,weight)=>applyHistoryToSets(index,reps,weight)}/></div>
           <div>
           <div className="mb-2 grid grid-cols-[2rem_1fr_1fr_2rem] gap-2 px-3 text-[10px] text-muted"><span>Set</span><span>Reps{slot.target.per_side?' / side':''}</span><span>Weight (kg)</span><span>Done</span></div>
@@ -172,8 +209,9 @@ export function LiveWorkout({planId,name,dayIndex,day,focus,date,hasDate,initial
           
           <div aria-live="polite" className="text-xs">{busy.includes(index)?<span className="mt-3 flex items-center gap-2 text-muted"><LoaderCircle size={13} className="animate-spin"/>Saving…</span>:errors[index]?<p role="alert" className="mt-3 text-red-700">{errors[index]}</p>:null}</div>
           </div></div>
+          {index<slots.length-1&&<label className="mx-5 mb-4 flex min-h-10 items-center gap-2 text-xs text-muted"><input type="checkbox" disabled={locked||adding||busy.length>0} checked={Boolean(slot.target.superset_id&&slot.target.superset_id===slots[index+1].target.superset_id)} onChange={()=>toggleSuperset(index)}/>Superset with next</label>}
         </article>;
-      })}<button disabled={!ready||adding||removing||busy.length>0||slots.length>=10} onClick={()=>void openExercisePicker()} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-line bg-white px-4 py-3 text-sm font-medium"><Plus size={16}/>{adding?'Adding…':'Add exercise'}</button>{addError&&<p role="alert" className="text-sm text-red-700">{addError}</p>}</div></div>
+      })}<button disabled={!ready||layoutBusy||adding||removing||busy.length>0||slots.length>=10} onClick={()=>void openExercisePicker()} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-line bg-white px-4 py-3 text-sm font-medium"><Plus size={16}/>{adding?'Adding…':'Add exercise'}</button>{addError&&<p role="alert" className="text-sm text-red-700">{addError}</p>}</div></div>
     </main>
     {pickerOpen&&<ExercisePicker dayLabel={day} exercises={library} equipment={[]} selected={slots.map(slot=>slot.exercise.id)} busy={adding} onCreated={exercise=>setLibrary(current=>[exercise,...current])} onClose={()=>setPickerOpen(false)} onAdd={exercise=>void addExercise(exercise)}/>}
     {swapIndex!==null&&<SwapModal dayIndex={dayIndex} slot={slots[swapIndex]} planId={planId} onClose={()=>setSwapIndex(null)} onReplace={replace}/>}

@@ -39,5 +39,5 @@ export default async function LiveWorkoutPage({ params, searchParams }: {
       return row?{reps:row.reps,weight_kg:Number(row.weight_kg),saved:{reps:row.reps,weight_kg:Number(row.weight_kg)}}:{reps:target.reps,weight_kg:defaultWeight};
     })};
   });
-  return <LiveWorkout key={`${id}:${dayIndex}:${date}`} planId={id} name={plan.name} dayIndex={dayIndex} day={day.day} focus={day.focus} date={date} hasDate={Boolean(query.date)} initialSlots={slots} schedule={plan.program.days.map(d=>d.day)}/>;
+  return <LiveWorkout key={`${id}:${dayIndex}:${date}`} planId={id} name={plan.name} dayIndex={dayIndex} day={day.day} focus={day.focus} date={date} hasDate={Boolean(query.date)} initialProgramIds={day.exercises.map(e=>e.exercise_id)} initialSlots={slots} schedule={plan.program.days.map(d=>d.day)}/>;
 }
