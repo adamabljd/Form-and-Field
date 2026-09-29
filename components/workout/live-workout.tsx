@@ -2,13 +2,12 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRightLeft, Check, CheckCheck, ChevronRight, LoaderCircle, Timer, Plus, Minus, Save } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, Check, CheckCheck, ChevronRight, LoaderCircle, Trash2, Plus, Minus, Save } from 'lucide-react';
 import { ExerciseImage } from '@/components/exercise-image';
 import { sessionLabel } from '@/lib/training-types';
 import { ExercisePicker } from '@/components/programs/exercise-picker';
 import { localDate, type Exercise } from '@/lib/training';
 import { uuidPattern, type LiveSlot, type SwapCandidate, type SetResult } from '@/lib/live-workout';
-import { RestTimer, TempoModal, useWorkoutSound } from './timers';
 import { ExerciseHistory } from './exercise-history';
 import { SwapModal } from './swap-modal';
 
@@ -17,7 +16,7 @@ const isDirty=(slot:LiveSlot,index:number)=>{const result=resultFor(slot,index);
 
 type Props = { planId:string;name:string;dayIndex:number;day:string;focus:string;date:string;hasDate:boolean;initialSlots:LiveSlot[];schedule:string[] };
 export function LiveWorkout({planId,name,dayIndex,day,focus,date,hasDate,initialSlots,schedule}:Props) {
-  const router=useRouter();const sound=useWorkoutSound();
+  const router=useRouter();
   const [slots,setSlots]=useState(initialSlots);
   const [adding,setAdding]=useState(false);
   const [pickerOpen,setPickerOpen]=useState(false);
@@ -49,9 +48,20 @@ export function LiveWorkout({planId,name,dayIndex,day,focus,date,hasDate,initial
   const [errors,setErrors]=useState<Record<number,string>>({});
   const [storageError,setStorageError]=useState('');
   const [swapIndex,setSwapIndex]=useState<number|null>(null);
-  const [tempoIndex,setTempoIndex]=useState<number|null>(null);
-  const [restView,setRestView]=useState({seconds:0,running:false,finished:false});
-  const [rest,setRest]=useState<{id:number;seconds:number}|null>(null);
+  const [removing,setRemoving]=useState(false);
+  const removeLock=useRef(false);
+  async function removeExercise(index:number){
+    if(removeLock.current||saving.current.size||adding)return;
+    if(!window.confirm(`Remove ${slots[index].exercise.name} from ${day}? Saved history will be kept.`))return;
+    removeLock.current=true;setRemoving(true);setAddError('');
+    try{
+      const response=await fetch('/api/workout-exercise',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan_id:planId,day:dayIndex,slot_index:index,expected_count:slots.length})});
+      const body=await response.json();if(!response.ok)throw new Error(body.error||'Unable to remove exercise.');
+      setSlots(current=>current.filter((_,i)=>i!==index));setErrors({});setSwapIndex(null);
+      try{for(const key of Object.keys(sessionStorage)){if(key.startsWith(`ff-live:${planId}:${dayIndex}:`))sessionStorage.removeItem(key);}}catch{/* History remains saved on the server. */}
+    }catch(error){setAddError(error instanceof Error?error.message:'Unable to remove exercise.');}
+    finally{removeLock.current=false;setRemoving(false);}
+  }
   const hasUnsaved=slots.some(slot=>slot.completed.some(index=>isDirty(slot,index)));
   const storageKey=`ff-live:${planId}:${dayIndex}:${date}`;
 
@@ -91,13 +101,13 @@ export function LiveWorkout({planId,name,dayIndex,day,focus,date,hasDate,initial
   },[busy.length,hasUnsaved]);
 
   async function toggleSet(index:number,setIndex:number,saveEdit=false) {
-    if(!ready||saving.current.has(index))return;
+    if(!ready||removeLock.current||saving.current.has(index))return;
     const slot=slots[index];const completed=saveEdit||!slot.completed.includes(setIndex);
     const draft=resultFor(slot,setIndex);
     const actual=!completed&&draft.saved?draft.saved:draft;
     if(!Number.isInteger(actual.reps)||actual.reps<1||actual.reps>100||!Number.isFinite(actual.weight_kg)||actual.weight_kg<0||actual.weight_kg>1000){setErrors(current=>({...current,[index]:'Enter 1–100 reps and a weight from 0–1000 kg.'}));return;}
     const previous=slot.completed;
-    saving.current.add(index);setBusy([...saving.current]);sound.prime();
+    saving.current.add(index);setBusy([...saving.current]);
     setErrors(current=>({...current,[index]:''}));
     setSlots(current=>current.map((row,i)=>i===index?{...row,completed:completed?[...new Set([...row.completed,setIndex])]:row.completed.filter(n=>n!==setIndex)}:row));
     try {
@@ -106,7 +116,6 @@ export function LiveWorkout({planId,name,dayIndex,day,focus,date,hasDate,initial
       const body=await response.json();
       if(!response.ok)throw new Error(body.error || 'Unable to save this set.');
       setSlots(current=>current.map((row,i)=>i===index?{...row,results:Array.from({length:row.target.sets},(_,j)=>j===setIndex?{reps:actual.reps,weight_kg:Math.round(actual.weight_kg*100)/100,...(completed?{saved:{reps:actual.reps,weight_kg:Math.round(actual.weight_kg*100)/100}}:{})}:resultFor(row,j))}:row));
-      if(completed&&!previous.includes(setIndex)&&!saveEdit)setRest({id:Date.now(),seconds:slot.target.rest_seconds || 60});
     }catch(error){
       setSlots(current=>current.map((row,i)=>i===index?{...row,completed:previous}:row));
       setErrors(current=>({...current,[index]:error instanceof Error && error.name!=='TimeoutError'?error.message:'Save timed out. Tap the set again to retry safely.'}));
@@ -136,17 +145,17 @@ export function LiveWorkout({planId,name,dayIndex,day,focus,date,hasDate,initial
   const done=slots.reduce((sum,slot)=>sum+slot.completed.length,0);
   const allDone=total>0&&done===total&&!busy.length&&!Object.values(errors).some(Boolean)&&!hasUnsaved;
   return <div data-theme="light" className="min-h-screen bg-canvas text-ink selection:bg-accent selection:text-white">
-    <header className="border-b border-line bg-white/95"><div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-5 sm:px-8"><Link href="/workout" onClick={e=>{if(busy.length)e.preventDefault();}} className="flex items-center gap-2 text-xs font-semibold text-muted hover:text-ink"><ArrowLeft size={17}/>Programs</Link><span className="text-sm font-extrabold tracking-tight">form<span className="text-muted">&</span>field<span className="text-accent">.</span></span></div></header>
-    <main className="mx-auto max-w-6xl px-5 pb-28 pt-8 sm:px-8">
+    <header className="border-b border-line bg-white/95"><div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-5 sm:px-8"><Link href="/workout" onClick={e=>{if(busy.length||removing||adding)e.preventDefault();}} className="flex items-center gap-2 text-xs font-semibold text-muted hover:text-ink"><ArrowLeft size={17}/>Programs</Link><span className="text-sm font-extrabold tracking-tight">form<span className="text-muted">&</span>field<span className="text-accent">.</span></span></div></header>
+    <main className="mx-auto max-w-6xl px-5 pb-10 pt-8 sm:px-8">
       <div className="mb-5"><h1 className="text-2xl font-semibold">{name}</h1><p className="mt-1 text-xs text-muted">{day} · {sessionLabel(focus)} · {date}</p></div>
-      <nav aria-label="Workout days" className="mb-7 flex gap-2 overflow-x-auto pb-1">{schedule.map((label,index)=><button key={label} disabled={busy.length>0||!ready} onClick={()=>router.push(`/workout/${planId}?day=${index}&date=${date}`)} aria-current={index===dayIndex?'page':undefined} className={`flex shrink-0 items-center gap-3 rounded-xl border px-4 py-3 text-xs font-semibold ${index===dayIndex?'border-accent/40 bg-accent/10 text-accent':'border-line bg-white text-muted hover:text-ink'}`}>{label}<ChevronRight size={12}/></button>)}</nav>
+      <nav aria-label="Workout days" className="mb-7 flex gap-2 overflow-x-auto pb-1">{schedule.map((label,index)=><button key={label} disabled={busy.length>0||!ready||removing||adding} onClick={()=>router.push(`/workout/${planId}?day=${index}&date=${date}`)} aria-current={index===dayIndex?'page':undefined} className={`flex shrink-0 items-center gap-3 rounded-xl border px-4 py-3 text-xs font-semibold ${index===dayIndex?'border-accent/40 bg-accent/10 text-accent':'border-line bg-white text-muted hover:text-ink'}`}>{label}<ChevronRight size={12}/></button>)}</nav>
       {storageError&&<p role="status" className="mb-4 text-xs text-amber-700">{storageError}</p>}
       {allDone&&<div role="status" className="mb-6 flex items-center gap-4 rounded-2xl border border-accent/40 bg-accent/10 p-5"><CheckCheck size={29} className="text-accent"/><div><h2 className="font-semibold text-accent">Session complete</h2></div></div>}
-      <div className="grid items-start gap-6 lg:grid-cols-[1fr_280px]"><div className="space-y-5">{slots.map((slot,index)=>{
-        const locked=busy.includes(index)||!ready;const finished=slot.completed.length===slot.target.sets&&!slot.completed.some(n=>isDirty(slot,n));
+      <div className="mx-auto max-w-4xl"><div className="space-y-5">{slots.map((slot,index)=>{
+        const locked=busy.includes(index)||!ready||removing;const finished=slot.completed.length===slot.target.sets&&!slot.completed.some(n=>isDirty(slot,n));
         return <article key={index} className={`overflow-hidden rounded-2xl border ${finished?'border-accent/40':'border-line'} bg-white`}>
-          <div className="flex flex-wrap items-start justify-between gap-4 p-5 sm:p-6"><div className="flex gap-3"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${finished?'bg-accent/15 text-accent':'bg-canvas text-muted'}`}>{finished?<Check size={18}/>:String(index+1).padStart(2,'0')}</span><div><h2 className="text-lg font-semibold">{slot.exercise.name}</h2><p className="mt-1.5 text-xs text-muted"><span className="font-bold text-accent">{slot.target.sets} × {slot.target.reps}</span> reps{slot.target.per_side?' per side':''}</p></div></div><button disabled={locked||slot.completed.length>0} title={slot.completed.length?'Undo completed sets before swapping this slot.':'Find an alternative'} onClick={()=>setSwapIndex(index)} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2.5 text-xs font-medium text-ink hover:border-accent hover:text-accent"><ArrowRightLeft size={14}/>Swap</button></div>
-          <div className="grid gap-5 px-5 pb-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:px-6 sm:pb-6"><div><ExerciseImage key={slot.exercise.id} name={slot.exercise.name} url={slot.exercise.gif_url} className="rounded-xl"/><div className="mt-3 flex items-center justify-between gap-3"><p className="text-[10px] text-muted">{slot.exercise.equipment.join(' · ')||'Bodyweight'}</p><button onClick={()=>setTempoIndex(index)} className="flex shrink-0 items-center gap-1.5 rounded-lg bg-canvas px-3 py-2.5 text-[11px] font-medium text-accent"><Timer size={14}/>Tempo</button></div><ExerciseHistory key={slot.exercise.id} exerciseId={slot.exercise.id} planId={planId} dayIndex={dayIndex} slotIndex={index} date={date} onUse={(reps,weight)=>applyHistoryToSets(index,reps,weight)}/></div>
+          <div className="flex flex-wrap items-start justify-between gap-4 p-5 sm:p-6"><div className="flex gap-3"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${finished?'bg-accent/15 text-accent':'bg-canvas text-muted'}`}>{finished?<Check size={18}/>:String(index+1).padStart(2,'0')}</span><div><h2 className="text-lg font-semibold">{slot.exercise.name}</h2><p className="mt-1.5 text-xs text-muted"><span className="font-bold text-accent">{slot.target.sets} × {slot.target.reps}</span> reps{slot.target.per_side?' per side':''}</p></div></div><div className="flex gap-2"><button disabled={locked||slot.completed.length>0} title={slot.completed.length?'Undo completed sets before swapping this slot.':'Find an alternative'} onClick={()=>setSwapIndex(index)} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2.5 text-xs font-medium text-ink hover:border-accent hover:text-accent"><ArrowRightLeft size={14}/>Swap</button><button disabled={locked||adding||busy.length>0} onClick={()=>void removeExercise(index)} aria-label={`Remove ${slot.exercise.name}`} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2.5 text-xs text-muted"><Trash2 size={14}/>Remove</button></div></div>
+          <div className="grid gap-5 px-5 pb-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:px-6 sm:pb-6"><div><ExerciseImage key={slot.exercise.id} name={slot.exercise.name} url={slot.exercise.gif_url} className="rounded-xl"/><ExerciseHistory key={slot.exercise.id} exerciseId={slot.exercise.id} planId={planId} dayIndex={dayIndex} slotIndex={index} date={date} onUse={(reps,weight)=>applyHistoryToSets(index,reps,weight)}/></div>
           <div>
           <div className="mb-2 grid grid-cols-[2rem_1fr_1fr_2rem] gap-2 px-3 text-[10px] text-muted"><span>Set</span><span>Reps{slot.target.per_side?' / side':''}</span><span>Weight (kg)</span><span>Done</span></div>
           <div className="space-y-2">{Array.from({length:slot.target.sets},(_,setIndex)=>{
@@ -164,11 +173,9 @@ export function LiveWorkout({planId,name,dayIndex,day,focus,date,hasDate,initial
           <div aria-live="polite" className="text-xs">{busy.includes(index)?<span className="mt-3 flex items-center gap-2 text-muted"><LoaderCircle size={13} className="animate-spin"/>Saving…</span>:errors[index]?<p role="alert" className="mt-3 text-red-700">{errors[index]}</p>:null}</div>
           </div></div>
         </article>;
-      })}<button disabled={!ready||adding||busy.length>0||slots.length>=10} onClick={()=>void openExercisePicker()} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-line bg-white px-4 py-3 text-sm font-medium"><Plus size={16}/>{adding?'Adding…':'Add exercise'}</button>{addError&&<p role="alert" className="text-sm text-red-700">{addError}</p>}</div><aside className="space-y-4 lg:sticky lg:top-6"><RestTimer signal={rest} sound={sound} onTick={setRestView}/><section className="rounded-2xl border border-line bg-white p-5"><div className="my-4 flex items-baseline gap-2"><span className="text-3xl font-semibold text-accent">{done}</span><span className="text-sm text-muted">/ {total} sets</span></div><div role="progressbar" aria-label="Completed sets" aria-valuenow={done} aria-valuemin={0} aria-valuemax={total} className="h-1.5 overflow-hidden rounded-full bg-canvas"><div className="h-full rounded-full bg-accent transition-all" style={{width:`${total?done/total*100:0}%`}}/></div></section></aside></div>
+      })}<button disabled={!ready||adding||removing||busy.length>0||slots.length>=10} onClick={()=>void openExercisePicker()} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-line bg-white px-4 py-3 text-sm font-medium"><Plus size={16}/>{adding?'Adding…':'Add exercise'}</button>{addError&&<p role="alert" className="text-sm text-red-700">{addError}</p>}</div></div>
     </main>
-    <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-white/95 px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur lg:hidden"><div className="mx-auto flex max-w-xl items-center justify-between"><span className="text-xs text-muted"><strong className="text-accent">{done}/{total}</strong> sets {busy.length?'· saving…':''}</span><button onClick={()=>{sound.prime();setRest({id:Date.now(),seconds:60});}} className="flex items-center gap-2 rounded-lg bg-accent px-4 py-3 text-xs font-bold text-white"><Timer size={15}/>{restView.running?`${String(Math.floor(restView.seconds/60)).padStart(2,'0')}:${String(restView.seconds%60).padStart(2,'0')} · restart`:'60s rest'}</button></div>{restView.finished&&<p role="status" className="mt-2 text-[11px] text-accent">Rest complete.</p>}</div>
     {pickerOpen&&<ExercisePicker dayLabel={day} exercises={library} equipment={[]} selected={slots.map(slot=>slot.exercise.id)} busy={adding} onCreated={exercise=>setLibrary(current=>[exercise,...current])} onClose={()=>setPickerOpen(false)} onAdd={exercise=>void addExercise(exercise)}/>}
     {swapIndex!==null&&<SwapModal dayIndex={dayIndex} slot={slots[swapIndex]} planId={planId} onClose={()=>setSwapIndex(null)} onReplace={replace}/>}
-    {tempoIndex!==null&&<TempoModal name={slots[tempoIndex].exercise.name} sound={sound} onClose={()=>setTempoIndex(null)}/>}
   </div>;
 }

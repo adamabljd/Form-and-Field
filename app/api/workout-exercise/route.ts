@@ -18,3 +18,15 @@ export async function POST(request: Request) {
     return NextResponse.json({exercise,target});
   }catch(error){return apiError(error);}
 }
+
+export async function DELETE(request: Request) {
+  try {
+    const {supabase}=await authenticateApi();
+    const body=objectBody(await readBody(request));
+    if(typeof body.plan_id!=='string'||!uuidPattern.test(body.plan_id)||!Number.isInteger(body.day)||Number(body.day)<0||Number(body.day)>6||!Number.isInteger(body.slot_index)||Number(body.slot_index)<0||!Number.isInteger(body.expected_count)||Number(body.expected_count)<1||Number(body.expected_count)>10||Number(body.slot_index)>=Number(body.expected_count))throw new EngineError('Invalid exercise selection.',400);
+    const {error}=await supabase.rpc('ff_remove_workout_exercise',{p_id:body.plan_id,p_day:body.day,p_slot:body.slot_index,p_count:body.expected_count});
+    if(error)throw new EngineError(error.code==='P0001'?error.message:'Unable to remove exercise. Apply the remove-exercise migration.',409);
+    revalidatePath('/workout');revalidatePath('/workout/[id]','page');
+    return NextResponse.json({removed:true});
+  }catch(error){return apiError(error);}
+}
